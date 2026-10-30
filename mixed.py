@@ -15,6 +15,7 @@ p.add_argument("--sites", default="0,1,2", help="where hints enter: 0 input, 1 m
 p.add_argument("--drop", type=float, default=0.0, help="share of hints dropped in training")
 p.add_argument("--drop-all", type=float, default=0.0, help="chance a token gets no hint at all in training")
 p.add_argument("--aux", type=int, default=0, help="1 = every step also trains on the same batch without hints")
+p.add_argument("--right", type=int, default=0, help="1 = a switch on each hint, trained to predict whether the hint is right; needs --aux 1")
 p.add_argument("--max-seen", type=int, default=0, help="tables keep only contexts in count buckets below this, in training and at evaluation")
 p.add_argument("--lr", type=float, default=0.02)
 p.add_argument("--hint-lr", type=float, default=0.1)
@@ -109,6 +110,7 @@ class LM(nn.Module):
         nn.init.normal_(s.emb.weight, std=a.width ** -0.5)
         nk = len(LV) * 42
         s.sigma = nn.Parameter(torch.zeros(nk)); s.beta = nn.Parameter(torch.zeros(nk, a.width)); s.alpha = nn.Parameter(torch.ones(3))
+        s.sw = nn.Parameter(torch.zeros(a.width)); s.sw0 = nn.Parameter(torch.tensor(2.0))
 
     def hint(s, tok, kd):
         if tok is None:
@@ -119,8 +121,17 @@ class LM(nn.Module):
             H = H + (s.sigma[k][..., None] * s.emb(tok[L].clamp(min=0)) + s.beta[k]) * m[..., None]
         return H
 
+    def plain(s, x):
+        h = s.emb(x)
+        for b in s.blocks:
+            h = b(h)
+        return s.norm(h)
+
     def forward(s, x, tok=None, kd=None, part=None):
-        H = s.hint(tok, kd); use = lambda site: s.alpha[site] * H if site in SITES else 0.0
+        H = s.hint(tok, kd); g = 1.0
+        if a.right and tok is not None:
+            s.h0 = s.plain(x); s.logit = s.h0.detach() @ s.sw + s.sw0; g = s.logit.sigmoid()[..., None]
+        use = lambda site: g * s.alpha[site] * H if site in SITES else 0.0
         x = s.emb(x) + use(0)
         for i, b in enumerate(s.blocks):
             x = b(x)
@@ -158,7 +169,7 @@ class Muon(torch.optim.Optimizer):
 model = LM()
 hid = [w for n, w in model.named_parameters() if w.ndim == 2 and "emb" not in n and n != "beta"]
 ids = {id(w) for w in hid}
-trust = [model.sigma, model.beta, model.alpha]; tid = {id(w) for w in trust}
+trust = [model.sigma, model.beta, model.alpha, model.sw, model.sw0]; tid = {id(w) for w in trust}
 rest = [w for w in model.parameters() if id(w) not in ids and id(w) not in tid]
 opts = [torch.optim.Adam(rest, lr=a.embed_lr, betas=(0.9, 0.95)), torch.optim.Adam(trust, lr=a.hint_lr, betas=(0.9, 0.95)), Muon(hid, a.lr, a.momentum)]
 for o in opts:
@@ -178,14 +189,25 @@ def dropped(tok):
     return tok.where(torch.rand(tok.shape[1:]) > a.drop_all, torch.tensor(-1)) if a.drop_all else tok
 
 
+def right_loss(tok, y):
+    """The switch learns whether the longest hint equals the next token."""
+    has = (tok >= 0).any(0) & (y != PAD); last = tok[(tok >= 0).int().cumsum(0).argmax(0), torch.arange(len(y))[:, None], torch.arange(y.shape[1])]
+    return F.binary_cross_entropy_with_logits(model.logit[has], (last[has] == y[has]).float())
+
+
 @torch.no_grad()
 def web_val(hints):
     model.eval(); tot, n = 0.0, 0
+    sw, ns = 0.0, 0
     for i in range(0, nv, 32):
         x, y = rm(VX[i:i + 32]), rm(VY[i:i + 32])
         tk, kk = (rm(VT[:, i:i + 32]), torch.as_tensor(VK[:, i:i + 32].astype(np.int64))) if hints else (None, None)
         l = F.cross_entropy(model(x, tk, kk, WEB).flatten(0, 1), y.flatten(), reduction="sum"); tot += l.item(); n += y.numel()
+        if hints and a.right:
+            m = (tk >= 0).any(0); sw += model.logit[m].sigmoid().sum().item(); ns += m.sum().item()
     model.train()
+    if ns:
+        print("web switch mean", round(sw / ns, 3), flush=True)
     return round(tot / n, 4)
 
 
@@ -195,9 +217,11 @@ def task(g):
     tok = shift(seven(D[f"{g}_tok"])); kd = torch.as_tensor(seven(D[f"{g}_kd"])).clamp(min=0)
     tok = tok.where(kd // 6 < a.max_seen, torch.tensor(-1)) if a.max_seen else tok
     x = x + VW; model.eval()
-    on = model(x, tok, kd, FACT) if a.hints else model(x, None, None, FACT); off = model(x, None, None, FACT)
+    on = model(x, tok, kd, FACT) if a.hints else model(x, None, None, FACT)
+    sw = round(model.logit[:, pos].sigmoid().mean().item(), 3) if a.right else None
+    off = model(x, None, None, FACT)
     model.train()
-    return dict(acc=round((on[:, pos].argmax(-1) == y[:, pos]).float().mean().item(), 3), acc_off=round((off[:, pos].argmax(-1) == y[:, pos]).float().mean().item(), 3))
+    return dict(acc=round((on[:, pos].argmax(-1) == y[:, pos]).float().mean().item(), 3), acc_off=round((off[:, pos].argmax(-1) == y[:, pos]).float().mean().item(), 3), switch=sw)
 
 
 t0 = time.time()
@@ -206,11 +230,13 @@ for step in range(a.steps):
     b = stream[i]; x, y = b[:, :-1] + VW, b[:, 1:]
     t1, k1, t2, k2 = (dropped(TT[:, i]), TK[:, i], dropped(WTt[:, j]), WKt[:, j]) if a.hints else (None, None, None, None)
     lf = F.cross_entropy(model(x, t1, k1, FACT).flatten(0, 1), y.flatten(), ignore_index=PAD)
+    bf = right_loss(t1, y + VW) if a.right else 0.0
     lw = F.cross_entropy(model(WXt[j], t2, k2, WEB).flatten(0, 1), WYt[j].flatten())
+    bw = right_loss(t2, WYt[j]) if a.right else 0.0
     if a.aux:
         lf = (lf + F.cross_entropy(model(x, None, None, FACT).flatten(0, 1), y.flatten(), ignore_index=PAD)) / 2
         lw = (lw + F.cross_entropy(model(WXt[j], None, None, WEB).flatten(0, 1), WYt[j].flatten())) / 2
-    loss = (lf + lw) / 2
+    loss = (lf + lw + bf + bw) / 2
     loss.backward()
     for o in opts:
         for g in o.param_groups:

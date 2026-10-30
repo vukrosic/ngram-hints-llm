@@ -2,6 +2,46 @@
 
 Each setting was run once. Loss is cross-entropy on the next token; lower is better.
 
+## Why hints block reasoning, and a switch that fixes it (`gate.py`, `mixed.py`)
+
+Small test: width 32, 2 layers, 1000 steps, half facts and half comparison lines, "a > b . b > c . top ? a .", about 5 seconds, one run each. Hints set by hand at chosen words of comparison lines, in training and testing. Every row trains each step with and without hints. Accuracy is comparison with hints on.
+
+| Hints on comparison lines | Comparison |
+|---|---|
+| On everywhere | .764 |
+| On only at the answer word | .996 |
+| Off only at the answer word | .516 |
+| Off at ">" | .671 |
+| Off at names | .798 |
+| Off at dots | .968 |
+| Off at the dot between the statements | 1.000 |
+| Off on the whole line | 1.000 |
+
+At the dot between the statements the hint says "top" and is right 0% of the time. Turning off only that hint gives .991, 1.000 and .974 at width 64, 4 layers and 4000 steps, but .553 at width 128, so it is not the only cause at every size. Keeping only hints with one sure next token gives .521. With hints always on and no second pass: .545, with the first name of the line picked 94% of the time.
+
+Switch: a linear layer reads the hidden state from a pass without hints; the hint is multiplied by its sigmoid. Learned from the loss alone it stays at 1.0 and comparison is .769. Taught to predict whether the longest hint equals the next token, it drops to .03 at the harmful dot.
+
+| Setting | Switch, input | Switch, all three | With and without hints | Hints at output |
+|---|---|---|---|---|
+| Width 16 | .546 | .503 | - | - |
+| Width 32 | .994 | .636 | .764 | .995 |
+| Width 64 | .996 | .964 | .547 | 1.000 |
+| Width 128 | .959 | .955 | .639 | 1.000 |
+| 4 layers | .913 | .664 | .512 | .999 |
+| 4000 steps | .982 | .933 | .663 | 1.000 |
+
+A switch that is fully on or off gives comparison .996 and facts .559. A switch that reads the hidden state where the hint enters, with no second pass, was .518 at width 128 (plain hints .611) and .701 at 4000 steps (.730).
+
+One model on web text and the made-up language, switch at all three places, `python mixed.py --aux 1 --right 1 --width 64`:
+
+| Width | Web, no hints | Web, plain hints | Web, switch | Web, switch off | Comparison, plain/switch | Common fact off | Held-out sum, no hints/switch |
+|---|---|---|---|---|---|---|---|
+| 32 | 7.132 | 6.824 | 6.781 | 7.082 | .496/.905 | .014 | .493/0 |
+| 64 | 6.991 | 6.714 | **6.644** | 6.952 | .496/1.000 | .621 | .350/.251 |
+| 96 | 6.956 | 6.677 | **6.582** | 6.918 | .495/1.000 | .957 | .484/.094 |
+
+Training length at width 64, plain hints against switch: 360 steps 6.921 and 7.155, 1440 steps 6.816 and 6.819, 5760 steps 6.714 and 6.644. Comparison is not learned below 5760 steps. Switch with no training pass without hints, 1440 steps: 6.818, comparison .007; not run at 5760. Switch at the input only, width 64: web 6.671, comparison .495.
+
 ## Facts and reasoning (`facts.py`)
 
 A made-up language with 1.5M lines. Width 64, 4 layers, 4 heads, 5760 steps, batch 32, learning rate 0.02. Accuracy at the answer token on 1000 new lines per group. Chance is 1% for facts, about 10% for sums and 50% for read and comparison.
