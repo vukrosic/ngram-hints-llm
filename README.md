@@ -49,3 +49,9 @@ Hints added at the input let the model skip the task. Adding hints only at the o
 ## Setup
 
 Small transformers trained with Muon, each setting run once. All numbers and commands are in [RESULTS.md](RESULTS.md). The chart comes from `chart.py`.
+
+## Contribute
+
+Read the [paper](paper/main.pdf) and its source in [`paper/main.tex`](paper/main.tex). The Open Questions and Planned Experiments sections list what to test next. The first open test is `mixed.py`: one model trains on web text and on reasoning tasks at once, to see where hints should enter the model.
+
+Open an issue with your idea or a pull request with your code, command and numbers. Runs on larger models are the most useful.
