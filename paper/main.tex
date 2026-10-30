@@ -9,7 +9,7 @@
 \maketitle
 
 \begin{abstract}
-An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s. The hints used during training come only from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. We test this choice on a small character-level transformer trained with Muon. Keeping a token's own occurrence in the counts is the failure to avoid: validation loss goes from 1.89 to 3.53. Removing only that occurrence and dropping half of the hints at random during training gives a loss of 1.80 against 1.89 for hints from earlier steps, and this gap held at about 0.08 across a 15-fold range of model size. The gap grows when the corpus is much larger than the tokens trained (0.37 at 40 times) and disappears when it is 2.5 times larger. We did not reproduce on Shakespeare the reported result that each doubling of the corpus helps more than the last. On web text, leaving out the token's whole page removes the harm at small corpora, and short matches give most of the gain, which shrinks with training. In a made-up language, hints give perfect recall of facts stored in the same words and nothing for other wording, and hints added at the input stop the model from learning two-step comparison and sums. Hints added only at the output, with half dropped, keep the recall and restore that learning. When one model trains on web text and these tasks together, hints at all three places block comparison at three model sizes, while output-only hints keep it at the cost of part of the web text gain. The code is public \cite{code}.
+An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s. The hints used during training come only from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. We test this choice on a small character-level transformer trained with Muon. Keeping a token's own occurrence in the counts is the failure to avoid: validation loss goes from 1.89 to 3.53. Removing only that occurrence and dropping half of the hints at random during training gives a loss of 1.80 against 1.89 for hints from earlier steps, and this gap held at about 0.08 across a 15-fold range of model size. The gap grows when the corpus is much larger than the tokens trained (0.37 at 40 times) and disappears when it is 2.5 times larger. We did not reproduce on Shakespeare the reported result that each doubling of the corpus helps more than the last. On web text, leaving out the token's whole page removes the harm at small corpora, and short matches give most of the gain, which shrinks with training. In a made-up language, hints give perfect recall of facts stored in the same words and nothing for other wording, and hints added at the input stop the model from learning two-step comparison and sums. Hints added only at the output, with half dropped, keep the recall and restore that learning. A hint stops mattering once a fact has been stated a few times, and a model that always gets hints memorizes almost nothing itself. When one model trains on web text and these tasks together, hints at all three places block comparison at three model sizes, while output-only hints keep it at the cost of part of the web text gain. The code is public \cite{code}.
 \end{abstract}
 
 \section{Introduction}
@@ -197,9 +197,45 @@ Width & Hints & Web, hints on & Web, hints off & Held-out sum & Comparison\\\mid
 
 Table~\ref{tab:mixed} shows a trade-off. Hints at all three places give the largest web text gain, 0.28 to 0.31, and block comparison at all three sizes; with hints off their web loss is 0.65 to 0.71 worse than no hints. Output-only hints keep comparison and keep 41\% of that gain at width 64 and 64\% at width 96. Dropping half restores held-out sums too and leaves the hints-off web loss equal to or better than no hints, but keeps only 12\%, 7\% and 33\% of the gain at widths 32, 64 and 96. The share kept is highest at the largest size, but these are single runs at three sizes spanning 3.2 times the parameters, or 9 times without the embedding table.
 
+\section{How Rare Text Must Be for Hints to Help}
+Recall in language models tracks how often a fact appears \cite{kandpal,olmotrace}, and one study reports verbatim recall near 64 exposures at 1B parameters and 16 at 8B \cite{position}, while another finds the entity-frequency effect disappears on some models \cite{memcontext}. For retrieval, kNN-LM papers disagree on whether rare patterns \cite{knnlm} or high-frequency tokens \cite{knnlong} gain most. We found no such split for retrieved next-token hints.
+
+\subsection{A model needs only a few statements of a fact}
+Each of 200 facts per group was stated exactly 1, 2, 4 up to 256 times in training, with nothing else in the data. The table holds every fact, so a hint is always right and none are dropped. Table~\ref{tab:rare} shows accuracy without hints. The model reaches 50\% at about 10, 4 and 3 statements at widths 32, 64 and 128. With 4 times more training at width 64, every fact stated 4 times as often, the same count gives the same accuracy, so the count matters and not the length of the run. With hints every group scores 100\%. A model trained with hints scores at most 2.5\% with hints off at every count, even at 256 statements: since hints were always right, it memorized almost nothing itself.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrrrrr}\toprule
+Statements in training & 1 & 2 & 4 & 8 & 16 & 32\\\midrule
+Width 32 & .030 & .045 & .130 & .380 & .820 & .995\\
+Width 64 & .060 & .165 & .535 & .870 & .990 & 1.000\\
+Width 128 & .125 & .310 & .735 & .970 & 1.000 & 1.000\\
+Width 64, 4 times more training & -- & -- & .485 & .885 & .995 & 1.000\\\bottomrule
+\end{tabular}
+\caption{Accuracy without hints by how many times a fact was stated. Chance is 1\%.}\label{tab:rare}
+\end{table}
+
+\subsection{On web text the gain does not sit only on rare text}
+We split the gain of 0.357 at 1440 steps over 65K validation tokens (Table~\ref{tab:split}). Gain per token rises with match length, from 0.22 at length 2 to 3.98 at length 20, where the hint is right 92\% of the time, but lengths 2 to 4 hold 72\% of the gain because they cover far more tokens. By how many times the match was seen in the corpus the gain is nearly flat, from 0.29 to 0.53 per token, and it is highest for matches seen once. True next tokens seen 1K to 100K times hold 74\% of the gain on 46\% of tokens, and tokens seen over 100K times hold 14\% on 42\%, which disagrees with \cite{knnlong}. Hints that are right, on 18\% of tokens, give 125\% of the gain, and wrong hints take back 20\%. These models sit at a loss near 6.9, so this describes early training only.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrr}\toprule
+Group & Share of tokens & Share of gain & Gain per token\\\midrule
+No match & 8\% & $-4$\% & $-0.17$\\
+Longest match 2 to 4 & 80\% & 72\% & 0.32\\
+Longest match 5 & 7\% & 11\% & 0.56\\
+Longest match 6 & 4\% & 12\% & 1.05\\
+Longest match 10 & 0.6\% & 5\% & 3.16\\
+Longest match 20 & 0.3\% & 3\% & 3.98\\\midrule
+Match seen once & 19\% & 28\% & 0.53\\
+Match seen 2 to 15 times & 35\% & 39\% & 0.40\\
+Match seen 16 or more times & 38\% & 37\% & 0.35\\\bottomrule
+\end{tabular}
+\caption{Web text gain of hints of all seven lengths. The two blocks split the same tokens.}\label{tab:split}
+\end{table}
+
 \section{Limits}
 \begin{itemize}
-\item The made-up language tests use one training length, so they have no length check. Facts runs took about 190 s and joint runs 537 to 888 s, over our usual 10 s limit. We did not split the web text gain by token kind.
+\item The made-up language tests use one training length, so they have no length check. Facts runs took about 190 s, joint runs 537 to 888 s, and rarity runs 74 to 311 s, over our usual 10 s limit. We did not split the web text gain by token kind.
 \item The web text models stop at a loss far above real models, so they do not show what hints do for a trained model. The 360-step and 1440-step runs took 59 to 214 s, and web runs at 90 steps took up to 11.3 s, over our usual 10 s limit.
 \item Shakespeare is not web text. It has no crawled duplicates, its tokens are characters, and 6-grams match 79\% of validation but carry little information. The blog post's rising returns may need exact duplicates at long n-grams, so this does not contradict it.
 \item Each setting was run once, and learning rates were picked on the same validation chunks used for reporting, for every arm alike.
@@ -230,7 +266,8 @@ The small models above have not learned common next tokens, so we plan these exp
 \item If the vocabulary is cut to the 2,000 most common tokens plus one token for all others, so that each step is faster, does a model given the same time reach a lower validation loss, measured against the same model without hints at that vocabulary?
 \item If a model trains far beyond 16 times longer than our first web text run, does the validation loss gain from short matches disappear?
 \item If a model with hints at the output is made much larger, does the share of the web text loss gain it keeps, compared with hints at all three places, keep rising?
-\item If the web text loss gain is split by the longest match of each token and by token kind, do names and numbers gain more than other tokens only when the match is long?
+\item If the web text loss gain is split by token kind, do names and numbers gain more than other tokens only when the match is long?
+\item If a hint table drops n-grams already seen often, how much of the web text gain is lost at a much lower loss than we reached?
 \end{enumerate}
 
 \section{Conclusion}
@@ -251,6 +288,12 @@ For hints from a full corpus, remove each token's own occurrence (on web text, i
 \bibitem{catboost} L. Prokhorenkova et al. CatBoost: unbiased boosting with categorical features. NeurIPS, 2018.
 \bibitem{dropout} N. Srivastava et al. Dropout: a simple way to prevent neural networks from overfitting. JMLR, 2014.
 \bibitem{muonlab} V. Rosi\'c. Muon lab. \url{https://github.com/vukrosic/muon-lab}, 2026.
+\bibitem{kandpal} N. Kandpal et al. Large language models struggle to learn long-tail knowledge. ICML, 2023.
+\bibitem{olmotrace} Tracing multilingual factual knowledge acquisition in pretraining. arXiv:2505.14824, 2025.
+\bibitem{position} Positional fragility in LLMs: how offset effects reshape our understanding of memorization risks. arXiv:2505.13171, 2025.
+\bibitem{memcontext} Memory vs. context? Influential factors of factual recall in language models. arXiv:2609.24238, 2026.
+\bibitem{knnlm} Generalization through memorization: nearest neighbor language models. arXiv:1911.00172, 2019.
+\bibitem{knnlong} Long-tail crisis in nearest neighbor language models. arXiv:2503.22426, 2025.
 \bibitem{wangmem} X. Wang et al. Generalization v.s. memorization: tracing language models' capabilities back to pretraining data. ICLR, 2025. arXiv:2407.14985.
 \bibitem{norlund} T. Norlund et al. On the generalization ability of retrieval-enhanced transformers. arXiv:2302.12128, 2023.
 \bibitem{code} V. Rosi\'c. ngram-hints-llm: code for this paper. \url{https://github.com/vukrosic/ngram-hints-llm}, 2026.

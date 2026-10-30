@@ -51,6 +51,47 @@ python3 mixed.py --sites 2 --width 96
 python3 mixed.py --sites 2 --drop .5 --width 96
 ```
 
+## How rare a fact must be (`rare.py`)
+
+Accuracy without hints by how many times each of 200 facts per group was stated. Chance is 1%. With hints every group scores 100%. A model trained with hints scores at most 2.5% with hints off at every count up to 256. Runs took 74 to 311 s.
+
+| Statements | 1 | 2 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|---|
+| Width 32 | .030 | .045 | .130 | .380 | .820 | .995 |
+| Width 64 | .060 | .165 | .535 | .870 | .990 | 1.000 |
+| Width 128 | .125 | .310 | .735 | .970 | 1.000 | 1.000 |
+| Width 64, 4 times more training | - | - | .485 | .885 | .995 | 1.000 |
+
+```bash
+python3 rare.py --hints 0 --width 64
+python3 rare.py --hints 1 --width 64
+python3 rare.py --hints 0 --width 64 --repeat 4
+```
+
+## Where the web text gain sits (`web_split.py`)
+
+Width 40, 1440 steps, 65K validation tokens, total gain 0.357. The two blocks split the same tokens.
+
+| Group | Share of tokens | Share of gain | Gain per token |
+|---|---|---|---|
+| No match | 8% | -4% | -0.17 |
+| Longest match 2 to 4 | 80% | 72% | 0.32 |
+| Longest match 5 | 7% | 11% | 0.56 |
+| Longest match 6 | 4% | 12% | 1.05 |
+| Longest match 10 | 0.6% | 5% | 3.16 |
+| Longest match 20 | 0.3% | 3% | 3.98 |
+| Match seen once | 19% | 28% | 0.53 |
+| Match seen 2 to 15 times | 35% | 39% | 0.40 |
+| Match seen 16 or more times | 38% | 37% | 0.35 |
+
+Hints that are right cover 18% of tokens and give 125% of the gain; wrong hints take back 20%. True next tokens seen 1K to 100K times hold 74% of the gain on 46% of tokens.
+
+```bash
+python3 web_run.py --policy none --steps 1440 --width 40 --hint-lr 0.1 --val-chunks 1024 --lr .02 --dump none
+python3 web_run.py --policy page --size 7 --levels 2,3,4,5,6,10,20 --steps 1440 --width 40 --hint-lr 0.1 --val-chunks 1024 --lr .02 --dump all
+python3 web_split.py
+```
+
 ## Web text (`web_rows.py`, `web_run.py`)
 
 FineWeb GPT-2 tokens, corpus 100M tokens, width 40, 4 layers, learning rate 0.02. Hints leave out the token's own page.

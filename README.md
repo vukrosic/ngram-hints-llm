@@ -17,6 +17,8 @@ Code for the paper in [`paper/main.pdf`](paper/main.pdf).
 - **Hints at the model's input blocked reasoning** in a made-up language: two-step comparison fell from 100% to chance.
 - **Hints at the output only kept the recall and restored comparison.** With half dropped, sums came back too.
 - **Output-only hints cost part of the gain on web text.** They kept 41% and 64% of it at the two sizes tested; with half dropped they kept 7% to 33%.
+- **A model needs only a few statements of a fact.** A model reached 50% at about 10, 4 and 3 statements as it grew. Hints matter for text rarer than that.
+- **A model that always gets right hints memorizes almost nothing itself**, even a fact stated 256 times.
 - **On web text most of the gain comes from short matches of 2 and 3 tokens**, and that gain shrinks as training gets longer.
 
 ![Correct answers per task for three ways of adding hints](facts_vs_reasoning.png)
