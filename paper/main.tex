@@ -195,7 +195,7 @@ Width & Hints & Web, hints on & Web, hints off & Held-out sum & Comparison\\\mid
 \caption{One model trained on web text and the made-up language. Accuracy at the answer token. Rare facts in the table scored 1.000 in every hint row.}\label{tab:mixed}
 \end{table}
 
-Table~\ref{tab:mixed} shows a trade-off. Hints at all three places give the largest web text gain, 0.28 to 0.31, and block comparison at all three sizes; with hints off their web loss is about 0.65 worse than no hints. Output-only hints keep comparison and keep 41\% of that gain at width 64 and 64\% at width 96. Dropping half restores held-out sums too and leaves the hints-off web loss equal to or better than no hints, but keeps only 12\%, 7\% and 33\% of the gain at widths 32, 64 and 96. The share kept is highest at the largest size, but these are single runs at three sizes spanning 3.2 times the parameters, or 9 times without the embedding table.
+Table~\ref{tab:mixed} shows a trade-off. Hints at all three places give the largest web text gain, 0.28 to 0.31, and block comparison at all three sizes; with hints off their web loss is 0.65 to 0.71 worse than no hints. Output-only hints keep comparison and keep 41\% of that gain at width 64 and 64\% at width 96. Dropping half restores held-out sums too and leaves the hints-off web loss equal to or better than no hints, but keeps only 12\%, 7\% and 33\% of the gain at widths 32, 64 and 96. The share kept is highest at the largest size, but these are single runs at three sizes spanning 3.2 times the parameters, or 9 times without the embedding table.
 
 \section{Limits}
 \begin{itemize}
