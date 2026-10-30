@@ -13,6 +13,9 @@ p = argparse.ArgumentParser()
 p.add_argument("--hints", type=int, default=1)
 p.add_argument("--sites", default="0,1,2", help="where hints enter: 0 input, 1 middle, 2 output")
 p.add_argument("--drop", type=float, default=0.0, help="share of hints dropped in training")
+p.add_argument("--drop-all", type=float, default=0.0, help="chance a token gets no hint at all in training")
+p.add_argument("--aux", type=int, default=0, help="1 = every step also trains on the same batch without hints")
+p.add_argument("--max-seen", type=int, default=0, help="tables keep only contexts in count buckets below this, in training and at evaluation")
 p.add_argument("--lr", type=float, default=0.02)
 p.add_argument("--hint-lr", type=float, default=0.1)
 p.add_argument("--embed-lr", type=float, default=0.003)
@@ -65,6 +68,8 @@ def shift(t):
 
 stream = torch.as_tensor(D["stream"][:ut]); TT = shift(seven(D["tt"][:, :ut])); TK = torch.as_tensor(seven(D["tk"][:, :ut])).clamp(min=0)
 WXt, WYt, WTt, WKt = rm(WX), rm(WY), rm(WT), torch.as_tensor(WK.astype(np.int64))
+if a.max_seen:
+    WTt = WTt.where(WKt // 6 < a.max_seen, torch.tensor(-1)); VT = np.where(VK // 6 < a.max_seen, VT, -1); TT = TT.where(TK // 6 < a.max_seen, torch.tensor(-1))
 
 
 def rope(x, base=10000.0):
@@ -169,7 +174,8 @@ def lr_scale(step):
 
 
 def dropped(tok):
-    return tok.where(torch.rand(tok.shape) > a.drop, torch.tensor(-1)) if a.drop else tok
+    tok = tok.where(torch.rand(tok.shape) > a.drop, torch.tensor(-1)) if a.drop else tok
+    return tok.where(torch.rand(tok.shape[1:]) > a.drop_all, torch.tensor(-1)) if a.drop_all else tok
 
 
 @torch.no_grad()
@@ -187,6 +193,7 @@ def web_val(hints):
 def task(g):
     m = torch.as_tensor(D[f"{g}_x"]); pos = int(D[f"{g}_pos"]); x, y = m[:, :-1], m[:, 1:]
     tok = shift(seven(D[f"{g}_tok"])); kd = torch.as_tensor(seven(D[f"{g}_kd"])).clamp(min=0)
+    tok = tok.where(kd // 6 < a.max_seen, torch.tensor(-1)) if a.max_seen else tok
     x = x + VW; model.eval()
     on = model(x, tok, kd, FACT) if a.hints else model(x, None, None, FACT); off = model(x, None, None, FACT)
     model.train()
@@ -200,6 +207,9 @@ for step in range(a.steps):
     t1, k1, t2, k2 = (dropped(TT[:, i]), TK[:, i], dropped(WTt[:, j]), WKt[:, j]) if a.hints else (None, None, None, None)
     lf = F.cross_entropy(model(x, t1, k1, FACT).flatten(0, 1), y.flatten(), ignore_index=PAD)
     lw = F.cross_entropy(model(WXt[j], t2, k2, WEB).flatten(0, 1), WYt[j].flatten())
+    if a.aux:
+        lf = (lf + F.cross_entropy(model(x, None, None, FACT).flatten(0, 1), y.flatten(), ignore_index=PAD)) / 2
+        lw = (lw + F.cross_entropy(model(WXt[j], None, None, WEB).flatten(0, 1), WYt[j].flatten())) / 2
     loss = (lf + lw) / 2
     loss.backward()
     for o in opts:

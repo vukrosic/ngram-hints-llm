@@ -11,14 +11,16 @@ Code for the paper in [`paper/main.pdf`](paper/main.pdf).
 **Hints can hurt in two ways. If a token's own text is in the counts, the hint is the answer during training but not at test time. And if the model leans on hints, it may never learn the task itself.**
 
 > [!IMPORTANT]
-> Leave each token's whole page out of its training hints. If the model must also learn to reason, add hints only at the output, and expect to give up part of the speed gain.
+> Leave each token's whole page out of its training hints. If the model must also learn on its own, train every step with and without hints, or add hints only at the output and give up part of the gain.
 
 - **Hints give perfect recall of a fact stored in the same words.** The same fact in other words gets no help.
 - **Hints at the model's input blocked reasoning** in a made-up language: two-step comparison fell from 100% to chance.
 - **Hints at the output only kept the recall and restored comparison.** With half dropped, sums came back too.
 - **Output-only hints cost part of the gain on web text.** They kept 41% and 64% of it at the two sizes tested; with half dropped they kept 7% to 33%.
-- **A model needs only a few statements of a fact.** A model reached 50% at about 10, 4 and 3 statements as it grew. Hints matter for text rarer than that.
+- **A wider model needs fewer statements of a fact.** It reached 50% at about 45, 10, 4 and 2 statements at widths 16, 32, 64 and 192. More layers did not change this.
 - **A model that always gets right hints memorizes almost nothing itself**, even a fact stated 256 times.
+- **Training every step with and without hints fixes most of this.** In a joint test it kept 96% of the web gain and restored reasoning with hints off, for 47% more clock time. Reasoning with hints on stayed blocked, and common facts did not come back.
+- **Hints help text the model itself has not seen.** On web text the gain per token fell to zero once the model had seen the context 64 times.
 - **On web text most of the gain comes from short matches of 2 and 3 tokens**, and that gain shrinks as training gets longer.
 
 ![Correct answers per task for three ways of adding hints](facts_vs_reasoning.png)

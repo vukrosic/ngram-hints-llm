@@ -21,10 +21,17 @@ p.add_argument("--layers", type=int, default=4)
 p.add_argument("--heads", type=int, default=4)
 p.add_argument("--warmup", type=int, default=20)
 p.add_argument("--cooldown", type=float, default=0.3)
+p.add_argument("--per", type=int, default=200, help="facts per count")
+p.add_argument("--drop", type=float, default=0.0, help="chance a token gets no hint at all in training")
+p.add_argument("--ramp", type=int, default=0, help="1 = the drop chance rises from 0 to 1 over training")
+p.add_argument("--off-at", type=float, default=0.0, help="no hints after this share of training")
+p.add_argument("--max-seen", type=int, default=0, help="table keeps only contexts in count buckets below this, in training and at evaluation")
+p.add_argument("--aux", type=int, default=0, help="1 = every step also trains on the same batch without hints")
+p.add_argument("--sites", default="0,1,2")
 p.add_argument("--tag", default="")
 a = p.parse_args()
 torch.manual_seed(0)
-NAMES = 100; EXTRA = 3; PER = 200; COUNTS = [2 ** i for i in range(9)]; LV = [2, 3, 4, 6]; SITES = {0, 1, 2}; PAD = 0; POS = 6
+NAMES = 100; EXTRA = 3; PER = a.per; COUNTS = [2 ** i for i in range(9)]; LV = [2, 3, 4, 6]; SITES = {int(c) for c in a.sites.split(",")}; PAD = 0; POS = 6
 THE, OF, IS, DOT = range(NAMES + 1, NAMES + 5); REL = NAMES + 5; V = REL + 4; VW = 0
 BASE = np.uint64(1000003); C_EDGES = np.array([1, 2, 4, 8, 16, 64]); P_EDGES = np.array([0.25, 0.5, 0.75, 0.9, 0.9999])
 FACT = torch.arange(V)
@@ -84,6 +91,8 @@ TT, TK, GT, GK = [], [], [], []
 for m_ in LV:
     t = table(m_); x, y = lookup(t, stream, True); TT.append(x); TK.append(y); x, y = lookup(t, L, False); GT.append(x); GK.append(y)
 TT, TK, GT, GK = (torch.as_tensor(np.stack(v)) for v in (TT, TK, GT, GK))
+if a.max_seen:
+    TT, GT = TT.where(TK // 6 < a.max_seen, torch.tensor(-1)), GT.where(GK // 6 < a.max_seen, torch.tensor(-1))
 S = torch.as_tensor(stream); LT = torch.as_tensor(L)
 
 
@@ -201,7 +210,12 @@ t0 = time.time()
 for step in range(steps):
     i = torch.arange(step * a.batch, (step + 1) * a.batch); b = S[i]; x, y = b[:, :-1], b[:, 1:]
     tok, kd = (TT[:, i], TK[:, i]) if a.hints else (None, None)
+    chance = 1.0 if a.off_at and step >= a.off_at * steps else step / steps if a.ramp else a.drop
+    if a.hints and chance:
+        tok = tok.where(torch.rand(tok.shape[1:]) > chance, torch.tensor(-1))
     loss = F.cross_entropy(model(x, tok, kd, FACT).flatten(0, 1), y.flatten(), ignore_index=PAD)
+    if a.aux:
+        loss = (loss + F.cross_entropy(model(x, None, None, FACT).flatten(0, 1), y.flatten(), ignore_index=PAD)) / 2
     loss.backward()
     for o in opts:
         for g in o.param_groups:
@@ -212,6 +226,6 @@ for step in range(steps):
         print("not finite"); break
 res = dict(vars(a), steps=steps, params=sum(w.numel() for w in model.parameters()), counts=[c * a.repeat for c in COUNTS], on=acc(True) if a.hints else None, off=acc(False), last_loss=round(loss.item(), 3))
 res["seconds"] = round(time.time() - t0, 2)
-print(a.hints, a.width, a.repeat, res["on"], res["off"], res["seconds"], flush=True)
+print(a.tag, a.hints, a.width, a.layers, a.per, res["on"], res["off"], res["seconds"], flush=True)
 with open(os.path.join(HERE, "rare_results.jsonl"), "a") as f:
     f.write(json.dumps(res) + "\n")

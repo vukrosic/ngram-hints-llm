@@ -53,13 +53,22 @@ python3 mixed.py --sites 2 --drop .5 --width 96
 
 ## How rare a fact must be (`rare.py`)
 
-Accuracy without hints by how many times each of 200 facts per group was stated. Chance is 1%. With hints every group scores 100%. A model trained with hints scores at most 2.5% with hints off at every count up to 256. Runs took 74 to 311 s.
+Accuracy without hints by how many times each of 200 facts per group was stated. Chance is 1%. With hints every group scores 100%. A model trained with hints scores at most 2.5% with hints off at every count up to 256. Runs took 42 to 311 s.
 
 | Statements | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|---|---|
+| Width 16 | .000 | .035 | .005 | .065 | .105 | .260 |
+| Width 24 | .020 | .025 | .075 | .175 | .395 | .885 |
 | Width 32 | .030 | .045 | .130 | .380 | .820 | .995 |
+| Width 48 | .055 | .130 | .350 | .775 | 1.000 | 1.000 |
 | Width 64 | .060 | .165 | .535 | .870 | .990 | 1.000 |
+| Width 96 | .120 | .275 | .670 | .935 | 1.000 | 1.000 |
 | Width 128 | .125 | .310 | .735 | .970 | 1.000 | 1.000 |
+| Width 192 | .185 | .435 | .775 | .965 | .995 | 1.000 |
+| Width 64, 2 layers | .070 | .175 | .470 | .850 | .995 | 1.000 |
+| Width 64, 8 layers | .075 | .175 | .530 | .865 | 1.000 | 1.000 |
+| Width 64, 100 facts per count | .090 | .240 | .480 | .860 | 1.000 | 1.000 |
+| Width 64, 400 facts per count | .068 | .145 | .360 | .770 | .965 | 1.000 |
 | Width 64, 4 times more training | - | - | .485 | .885 | .995 | 1.000 |
 
 ```bash
@@ -67,6 +76,59 @@ python3 rare.py --hints 0 --width 64
 python3 rare.py --hints 1 --width 64
 python3 rare.py --hints 0 --width 64 --repeat 4
 ```
+
+## Keeping a model memorizing while it uses hints (`rare.py`, `mixed.py`)
+
+Accuracy with hints off at width 64, facts only, by statements in training. With hints on every row scores at least 99%, except no hints in the last quarter, which falls to 67% at 256 statements.
+
+| Training | 1 | 4 | 8 | 16 | 32 | 64 | 256 |
+|---|---|---|---|---|---|---|---|
+| No hints | .060 | .535 | .870 | .990 | 1.000 | 1.000 | 1.000 |
+| Hints always | .000 | .000 | .000 | .000 | .000 | .005 | .005 |
+| 25% of tokens without hints (`--drop .25`) | .005 | .010 | .015 | .005 | .010 | .140 | .700 |
+| 50% | .020 | .010 | .030 | .060 | .285 | .915 | 1.000 |
+| 75% | .045 | .235 | .555 | .960 | 1.000 | 1.000 | 1.000 |
+| 90% | .070 | .425 | .785 | .985 | 1.000 | 1.000 | 1.000 |
+| Share rises 0 to 100% (`--ramp 1`) | .010 | .065 | .195 | .505 | .870 | .995 | 1.000 |
+| No hints in last half (`--off-at .5`) | .045 | .225 | .515 | .865 | .995 | 1.000 | 1.000 |
+| No hints in last quarter (`--off-at .75`) | .005 | .040 | .055 | .175 | .375 | .765 | 1.000 |
+| Hints at output only (`--sites 2`) | .020 | .000 | .010 | .000 | .010 | .030 | .010 |
+| Output only, 50% without hints | .050 | .250 | .490 | .815 | 1.000 | 1.000 | 1.000 |
+| **Every step with and without hints (`--aux 1`)** | .065 | .475 | .890 | .985 | 1.000 | 1.000 | 1.000 |
+| Table keeps text seen under 16 times (`--max-seen 5`) | .015 | .025 | .000 | 1.000 | 1.000 | 1.000 | 1.000 |
+
+The same fixes on web text and reasoning in one model, width 64, 5760 steps. Gain is the share of the 0.277 web gain of hints at all three places. Fact off is a common fact with hints off.
+
+| Training | Web on | Web off | Sum on/off | Comparison on/off | Fact off | Gain | Seconds |
+|---|---|---|---|---|---|---|---|
+| No hints | - | 6.991 | .350 | .971 | .780 | - | 727 |
+| All three places | 6.714 | 7.637 | .048/.000 | .496/.014 | .012 | 100% | 852 |
+| **With and without hints (`--aux 1`)** | **6.726** | **6.952** | .040/.403 | .500/.960 | .070 | 96% | 1249 |
+| Output only, with and without | 6.924 | 6.980 | .270/.270 | .979/.979 | .036 | 24% | 1251 |
+| 75% of tokens without hints (`--drop-all .75`) | 6.868 | 6.991 | .222/.222 | .914/.774 | .270 | 44% | 877 |
+| Table under 16 times (`--max-seen 5`) | 7.010 | 7.077 | .581/.581 | .495/.505 | 1.000 | 0% | 881 |
+| Table under 64 times (`--max-seen 6`) | 6.933 | 7.132 | .349/.349 | .499/.488 | 1.000 | 21% | 880 |
+| Under 16, with and without | 6.985 | 6.972 | .148/.148 | .543/.971 | 1.000 | 2% | 1267 |
+
+```bash
+python3 rare.py --aux 1 --width 64
+python3 mixed.py --aux 1 --width 64
+```
+
+The closest work we found drops privileged inputs in reinforcement learning (arXiv:2005.09220). R-Drop runs two passes per batch on the same input (NeurIPS 2021). We found no test of these methods on next-token hints.
+
+## Hints help text the model itself has not seen (`web_seen.py`)
+
+The earlier split counts sightings in the 100M table corpus. The model trained on 737K tokens, 1/135 of that. This split counts sightings in the model's own training, for the 88.6% of tokens whose longest match fits inside their chunk.
+
+| Times the model saw the context | Share of tokens | Share of gain | Gain per token |
+|---|---|---|---|
+| 0 | 67.2% | 79.2% | 0.421 |
+| 1 | 7.9% | 8.3% | 0.377 |
+| 2 to 3 | 4.7% | 5.1% | 0.393 |
+| 4 to 15 | 5.0% | 3.7% | 0.265 |
+| 16 to 63 | 2.3% | 0.9% | 0.138 |
+| 64 or more | 1.5% | -0.1% | -0.026 |
 
 ## Where the web text gain sits (`web_split.py`)
 
