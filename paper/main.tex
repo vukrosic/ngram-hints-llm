@@ -9,7 +9,7 @@
 \maketitle
 
 \begin{abstract}
-An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s. The hints used during training come only from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. We test this choice on a small character-level transformer trained with Muon. Keeping a token's own occurrence in the counts is the failure to avoid: validation loss goes from 1.89 to 3.53. Removing only that occurrence and dropping half of the hints at random during training gives a loss of 1.80 against 1.89 for hints from earlier steps, and this gap held at about 0.08 across a 15-fold range of model size. The gap grows when the corpus is much larger than the tokens trained (0.37 at 40 times) and disappears when it is 2.5 times larger. We did not reproduce on Shakespeare the reported result that each doubling of the corpus helps more than the last. On web text, leaving out the token's whole page removes the harm at small corpora, and short matches give most of the gain, which shrinks with training. In a made-up language, hints give perfect recall of facts stored in the same words and nothing for other wording, and hints added at the input stop the model from learning two-step comparison and sums. Hints added only at the output, with half dropped, keep the recall and restore that learning. The code is public \cite{code}.
+An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s. The hints used during training come only from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. We test this choice on a small character-level transformer trained with Muon. Keeping a token's own occurrence in the counts is the failure to avoid: validation loss goes from 1.89 to 3.53. Removing only that occurrence and dropping half of the hints at random during training gives a loss of 1.80 against 1.89 for hints from earlier steps, and this gap held at about 0.08 across a 15-fold range of model size. The gap grows when the corpus is much larger than the tokens trained (0.37 at 40 times) and disappears when it is 2.5 times larger. We did not reproduce on Shakespeare the reported result that each doubling of the corpus helps more than the last. On web text, leaving out the token's whole page removes the harm at small corpora, and short matches give most of the gain, which shrinks with training. In a made-up language, hints give perfect recall of facts stored in the same words and nothing for other wording, and hints added at the input stop the model from learning two-step comparison and sums. Hints added only at the output, with half dropped, keep the recall and restore that learning. When one model trains on web text and these tasks together, hints at all three places block comparison at three model sizes, while output-only hints keep it at the cost of part of the web text gain. The code is public \cite{code}.
 \end{abstract}
 
 \section{Introduction}
@@ -174,9 +174,32 @@ Output only & 1.000 & 1.000 & .010 & .003 & 0 & .924 & 1.000\\
 
 This does not contradict Engram: its tables are learned, while our hints are retrieved next tokens. A made-up language shows a mechanism, not its size in real models.
 
+\subsection{Web text and reasoning in one model}
+Next we trained one model on both languages at once: each step uses 2 web chunks and 32 made-up lines, for 5760 steps. The two languages share no tokens, so one joined hint table gives the same hints as two separate tables. Each language's loss covers only its own tokens, for speed. Web hints use all seven lengths and leave out the token's page, with corpus 100M. We predicted that output-only hints with half dropped would keep at least two thirds of the web text gain, and this failed.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{rlrrrr}\toprule
+Width & Hints & Web, hints on & Web, hints off & Held-out sum & Comparison\\\midrule
+32 & None & -- & 7.132 & .493 & .600\\
+32 & All 3 places & 6.824 & 7.846 & 0 & .496\\
+32 & Output only, half dropped & 7.095 & 7.107 & .458 & .929\\\midrule
+64 & None & -- & 6.991 & .350 & .971\\
+64 & All 3 places & 6.714 & 7.637 & .048 & .496\\
+64 & Output only & 6.878 & 7.061 & 0 & 1.000\\
+64 & Output only, half dropped & 6.971 & 6.991 & .267 & .995\\\midrule
+96 & None & -- & 6.956 & .484 & .981\\
+96 & All 3 places & 6.677 & 7.602 & 0 & .495\\
+96 & Output only & 6.777 & 6.988 & 0 & .995\\
+96 & Output only, half dropped & 6.863 & 6.942 & .434 & .996\\\bottomrule
+\end{tabular}
+\caption{One model trained on web text and the made-up language. Accuracy at the answer token. Rare facts in the table scored 1.000 in every hint row.}\label{tab:mixed}
+\end{table}
+
+Table~\ref{tab:mixed} shows a trade-off. Hints at all three places give the largest web text gain, 0.28 to 0.31, and block comparison at all three sizes; with hints off their web loss is about 0.65 worse than no hints. Output-only hints keep comparison and keep 41\% of that gain at width 64 and 64\% at width 96. Dropping half restores held-out sums too and leaves the hints-off web loss equal to or better than no hints, but keeps only 12\%, 7\% and 33\% of the gain at widths 32, 64 and 96. The share kept is highest at the largest size, but these are single runs at three sizes spanning 3.2 times the parameters, or 9 times without the embedding table.
+
 \section{Limits}
 \begin{itemize}
-\item The facts test used one model size and one training length past the shorter runs, so it has no scaling check, and each run took about 190 s, over our usual 10 s limit. We did not test output-only hints on web text, and we did not split the web text gain by token kind.
+\item The made-up language tests use one training length, so they have no length check. Facts runs took about 190 s and joint runs 537 to 888 s, over our usual 10 s limit. We did not split the web text gain by token kind.
 \item The web text models stop at a loss far above real models, so they do not show what hints do for a trained model. The 360-step and 1440-step runs took 59 to 214 s, and web runs at 90 steps took up to 11.3 s, over our usual 10 s limit.
 \item Shakespeare is not web text. It has no crawled duplicates, its tokens are characters, and 6-grams match 79\% of validation but carry little information. The blog post's rising returns may need exact duplicates at long n-grams, so this does not contradict it.
 \item Each setting was run once, and learning rates were picked on the same validation chunks used for reporting, for every arm alike.
@@ -206,12 +229,12 @@ The small models above have not learned common next tokens, so we plan these exp
 \item If the model receives the table's counts for all next tokens as additions to its output scores, instead of the embedding of the most common next token, is its validation loss lower?
 \item If the vocabulary is cut to the 2,000 most common tokens plus one token for all others, so that each step is faster, does a model given the same time reach a lower validation loss, measured against the same model without hints at that vocabulary?
 \item If a model trains far beyond 16 times longer than our first web text run, does the validation loss gain from short matches disappear?
-\item If hints on web text enter only at the output with half dropped, does the model keep the loss gain of hints at all three places while its loss with hints off stays near that of a model trained without hints?
+\item If a model with hints at the output is made much larger, does the share of the web text loss gain it keeps, compared with hints at all three places, keep rising?
 \item If the web text loss gain is split by the longest match of each token and by token kind, do names and numbers gain more than other tokens only when the match is long?
 \end{enumerate}
 
 \section{Conclusion}
-For hints from a full corpus, remove each token's own occurrence (on web text, its whole page), and drop half of the hints during training. If the model must also learn to reason, add hints only at the output: in a made-up language this kept perfect recall of stored facts and restored comparison and sums, which hints at all three places blocked. In a small Muon-trained model this beat hints from earlier steps by about 0.08 at three sizes, and by more when the corpus was far larger than the tokens trained. If a run makes more than one pass, causal hints need the same removal. As a labelled guess, the size of this gain at the record's ratio of about 520 could be larger than in our 40 times case, but web text may behave differently, so it must be tested on FineWeb.
+For hints from a full corpus, remove each token's own occurrence (on web text, its whole page), and drop half of the hints during training. If the model must also learn to reason, add hints only at the output: in a made-up language this kept perfect recall of stored facts and restored comparison, which hints at all three places blocked at every size we tried. This costs part of the web text gain, so it is a trade-off, and dropping half of the hints restores sums too at a larger cost. In a small Muon-trained model this beat hints from earlier steps by about 0.08 at three sizes, and by more when the corpus was far larger than the tokens trained. If a run makes more than one pass, causal hints need the same removal. As a labelled guess, the size of this gain at the record's ratio of about 520 could be larger than in our 40 times case, but web text may behave differently, so it must be tested on FineWeb.
 
 \begin{thebibliography}{99}\small
 \bibitem{brunborg} H. Brunborg. N-gram hinted language modeling: NanoGPT Speedrun in 6.7s. \url{https://brunborg.com/n-gram-hinted-lm}, 2026.

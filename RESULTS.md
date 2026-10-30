@@ -26,6 +26,31 @@ python3 facts.py --hints 1 --steps 5760 --lr 0.02 --sites 2 --drop 0.5
 
 `--sites` picks where hints enter (0 input, 1 middle, 2 output), `--drop` the share dropped, `--use` the lengths as indices of 2, 3, 4, 6.
 
+## Web text and reasoning in one model (`mixed.py`)
+
+Each step trains on 2 web chunks and 32 made-up lines, for 5760 steps at learning rate 0.02. Web hints use lengths 2 to 20 and leave out the token's page. Rare facts in the table scored 1.000 in every hint row. Runs took 537 to 888 s.
+
+| Width | Hints | Web, hints on | Web, hints off | Held-out sum | Comparison |
+|---|---|---|---|---|---|
+| 32 | None | - | 7.132 | .493 | .600 |
+| 32 | All 3 places | 6.824 | 7.846 | 0 | .496 |
+| 32 | Output only, half dropped | 7.095 | 7.107 | .458 | .929 |
+| 64 | None | - | 6.991 | .350 | .971 |
+| 64 | All 3 places | 6.714 | 7.637 | .048 | .496 |
+| 64 | Output only | 6.878 | 7.061 | 0 | 1.000 |
+| 64 | Output only, half dropped | 6.971 | 6.991 | .267 | .995 |
+| 96 | None | - | 6.956 | .484 | .981 |
+| 96 | All 3 places | 6.677 | 7.602 | 0 | .495 |
+| 96 | Output only | 6.777 | 6.988 | 0 | .995 |
+| 96 | Output only, half dropped | 6.863 | 6.942 | .434 | .996 |
+
+```bash
+python3 mixed.py --hints 0 --width 96
+python3 mixed.py --sites 0,1,2 --width 96
+python3 mixed.py --sites 2 --width 96
+python3 mixed.py --sites 2 --drop .5 --width 96
+```
+
 ## Web text (`web_rows.py`, `web_run.py`)
 
 FineWeb GPT-2 tokens, corpus 100M tokens, width 40, 4 layers, learning rate 0.02. Hints leave out the token's own page.

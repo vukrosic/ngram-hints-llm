@@ -11,11 +11,12 @@ Code for the paper in [`paper/main.pdf`](paper/main.pdf).
 **Hints can hurt in two ways. If a token's own text is in the counts, the hint is the answer during training but not at test time. And if the model leans on hints, it may never learn the task itself.**
 
 > [!IMPORTANT]
-> Leave each token's whole page out of its training hints. If the model must also learn to reason, add hints only at the output and drop half of them during training.
+> Leave each token's whole page out of its training hints. If the model must also learn to reason, add hints only at the output, and expect to give up part of the speed gain.
 
 - **Hints give perfect recall of a fact stored in the same words.** The same fact in other words gets no help.
 - **Hints at the model's input blocked reasoning** in a made-up language: two-step comparison fell from 100% to chance.
-- **Hints at the output only, with half dropped, kept the recall and restored reasoning.**
+- **Hints at the output only kept the recall and restored comparison.** With half dropped, sums came back too.
+- **Output-only hints cost part of the gain on web text.** They kept 41% and 64% of it at the two sizes tested; with half dropped they kept 7% to 33%.
 - **On web text most of the gain comes from short matches of 2 and 3 tokens**, and that gain shrinks as training gets longer.
 
 ![Correct answers per task for three ways of adding hints](facts_vs_reasoning.png)
@@ -35,7 +36,7 @@ Hints added at the input let the model skip the task. Adding hints only at the o
 ## Where it stops working
 
 > [!WARNING]
-> The reasoning result comes from one small model on a made-up language, so it shows a mechanism and not its size in real models. Output-only hints were not tested on web text. Engram reports reasoning gains with learned tables, which are a different method.
+> The reasoning tasks are a made-up language run on small models, so they show a mechanism and not its size in real models. Engram reports reasoning gains with learned tables, which are a different method.
 
 ## Is this new?
 
@@ -52,6 +53,6 @@ Small transformers trained with Muon, each setting run once. All numbers and com
 
 ## Contribute
 
-Read the [paper](paper/main.pdf) and its source in [`paper/main.tex`](paper/main.tex). The Open Questions and Planned Experiments sections list what to test next. The first open test is `mixed.py`: one model trains on web text and on reasoning tasks at once, to see where hints should enter the model.
+Read the [paper](paper/main.pdf) and its source in [`paper/main.tex`](paper/main.tex). The Open Questions and Planned Experiments sections list what to test next. The first open question is whether output-only hints keep more of the web text gain on much larger models; `mixed.py` trains one model on web text and reasoning tasks at once.
 
 Open an issue with your idea or a pull request with your code, command and numbers. Runs on larger models are the most useful.
