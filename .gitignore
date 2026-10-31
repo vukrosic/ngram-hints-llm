@@ -7,3 +7,8 @@ finished/model/
 finished/wiki/
 finished/pages.jsonl
 finished/*.npz
+paper/*.aux
+paper/*.fdb_latexmk
+paper/*.fls
+paper/*.log
+paper/*.out

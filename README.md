@@ -1,8 +1,65 @@
-# Stop n-gram hints from leaking answers or blocking reasoning in your LLM
+# Key your LLM's n-gram memory by the set of words, not their order, so it recalls facts asked in new words (SetGram)
 
-Code for the paper in [`paper/main.pdf`](paper/main.pdf).
+Code for the paper in [`paper/main.pdf`](paper/main.pdf): **SetGram: an n-gram memory keyed by word sets recalls facts asked in new words**. The paper also surveys how language models use memory today.
 
 ## Abstract
+
+**Many language models now carry a memory next to their weights: a big table that is looked up from the last few tokens (a token is a word or a piece of a word). DeepSeek's Engram, the NanoGPT speedrun record's n-gram hints, infini-gram and kNN-LM all work this way.**
+
+**Every one of them looks up the last tokens in their exact order. "N was born in" finds the stored sentence "N was born in Paris". The question "Which city was N born in?" has the same words in a different order, so it finds nothing.**
+
+**SetGram keys the table by the set of the last few rare words instead, in any order. Rare words are names, places and other words outside the 500 most common tokens. Both sentences above then give the same key: {N, born}.**
+
+**On made-up biographies mixed into web text, SetGram answered 80% to 96% of the questions asked in new words. Five published kinds of memory stayed at chance, about 4.5%.**
+
+> [!IMPORTANT]
+> Add a table keyed by the set of rare words next to your exact n-gram table. It recalls a fact asked in words the table never stored, even for people the model never trained on. Exact tables, Engram-style hashed n-grams, CoCoNTs-style n-gram targets and a memory layer with product keys all scored at chance on the same questions.
+
+- **Good at facts asked in new words.** People seen in training: 81%. People that appear only in the table: 80%. Mixing the SetGram table into the output at test time: 96% for both.
+- **Grows with training and width.** For people only in the table: 50% → 67% → 80% from 30 to 120 steps, and 67% → 79% from 1.2M to 5.0M weights.
+- **Not a web-loss method.** On web text it lowered loss little on top of a full exact table (0.003 to 0.010) and cost 0.08 when used alone in training. Use it next to the exact table, not instead.
+- **Two tables in training can confuse each other.** Exact + SetGram hints in training recalled only 48% for trained people, because short exact keys fire on the reworded question with another person's answer. Mixed in at test time, the SetGram table cut web loss from 7.807 to 7.670 and recalled 96%.
+
+![Recall of a fact asked in new words, for each kind of memory](reworded_recall.png)
+
+---
+
+## Look up the set of rare words, so the order of the question does not matter
+
+An n-gram table counts, for each run of the last n tokens in a big text, which token came next. A model can read the most common next token as a hint.
+
+SetGram changes only the key. At each position it takes the last n rare words within the 16 tokens before, sorts them, and hashes the sorted list. A flag says whether the token just before is itself a rare word. The value is still the most common next token, with its count.
+
+Everything else is copied from the NanoGPT record: the hint is added at the input, the middle and the output, its weight is learned per count and share bucket, and a training token's own count is left out of its hint.
+
+> **"N was born in Paris" and "Which city was N born in?" share the key {N, born}, so the stored answer comes back for the new question.**
+
+## SetGram against published memory methods
+
+Biographies of 400 made-up people (birth city, university, company) are mixed into FineWeb text. Half the people appear in training text; the other half are stored only in the table. The test question uses a wording that was never stored or trained on. Width 32, 2 layers, 120 steps, Muon.
+
+| Memory | Web loss | Trained people | People only in the table |
+|---|---|---|---|
+| None | 7.807 | 6.7% | 3.8% |
+| Exact n-gram hints (record #367) | 7.428 | 5.7% | 3.0% |
+| Engram-style hashed 2- and 3-grams | 7.808 | 4.7% | 4.0% |
+| CoCoNTs-style n-gram targets | 7.761 | 6.0% | 4.3% |
+| Memory layer with product keys | 7.806 | 6.2% | 5.5% |
+| Exact table mixed in at test (infini-gram style) | 7.348 | 6.7% | 3.8% |
+| **SetGram hints in training** | 7.886 | **81.2%** | **79.5%** |
+| **SetGram table mixed in at test** | 7.670 | **96.3%** | **95.8%** |
+
+The baselines are simplified re-implementations in [`bio_run.py`](bio_run.py), not the original code. All commands are in [RESULTS.md](RESULTS.md#setgram-made-up-biographies-in-web-text-bio_rowspy-bio_runpy).
+
+> [!WARNING]
+> These are small models trained for 120 steps on one made-up fact set, one run per setting. The question wordings are templates, so real rewording (synonyms, other languages) is untested. Width was checked over 4×, not 8×, and steps over 4×.
+
+---
+
+## Earlier results: n-gram hints leak answers and block reasoning
+
+The rest of this repo is the earlier part of the paper, about the exact n-gram hints of the NanoGPT record.
+
 
 **An n-gram hint tells a language model which token (a word or a piece of a word) most often followed the last few tokens in a large text corpus. For example, after "the capital of France is" the hint is "Paris".**
 
@@ -10,7 +67,7 @@ Code for the paper in [`paper/main.pdf`](paper/main.pdf).
 
 **Hints can hurt in two ways. If a token's own text is in the counts, the hint is the answer during training but not at test time. And if the model leans on hints, it may never learn the task itself.**
 
-> [!IMPORTANT]
+> [!NOTE]
 > Leave each token's whole page out of its training hints. If the model must also learn on its own, the simplest candidate is a small hint table in training and the full table at test time: in a small test it kept reasoning and improved facts, but it is untested on web text. On web text, training every step with and without hints plus a switch trained to predict whether each hint is right restored comparison and lowered web loss below plain hints at the longest run.
 
 - **Hints recall a fact stored in the same words.** They scored 100% in the first made-up language test and .81 to .89 in the smaller one. The same fact in other words gets no help.
@@ -26,6 +83,7 @@ Code for the paper in [`paper/main.pdf`](paper/main.pdf).
 - **Teach a switch to predict whether each hint is right.** Learned from the loss alone it stayed fully on. Taught, at widths 32, 64 and 96 it raised comparison from chance to 90.5%, 100% and 100%, and beat plain hints on web loss by 0.04, 0.07 and 0.09 at 5760 steps. It was behind at 360 steps and level at 1440. Sums with hints on stayed blocked.
 - **Hints help text the model itself has not seen.** On web text the gain per token fell to zero once the model had seen the context 64 times.
 - **On web text most of the gain comes from short matches of 2 and 3 tokens**, and that gain shrinks as training gets longer.
+
 
 ![Correct answers per task for three ways of adding hints](facts_vs_reasoning.png)
 
@@ -78,12 +136,17 @@ Details are in [RESULTS.md](RESULTS.md) and `finished/`. The model and text are 
 
 ## Is this new?
 
+We found no memory for language models keyed by an unordered set of words from a stored corpus. Engram, Memory Grafting, TF-Engram, infini-gram, kNN-LM and the NanoGPT record all key by the exact last tokens. NGM (arXiv 2605.16893) averages the last tokens' embeddings, which ignores order, but stores no corpus or next tokens. Trigger language models (Rosenfeld, 1996) let any earlier word predict the next word, but count single word pairs, not sets.
+
+
 | Work | Lookup | Own text removed | Tested by task kind |
 |---|---|---|---|
 | [NanoGPT Speedrun record](https://brunborg.com/n-gram-hinted-lm) | next token | earlier steps only | no |
 | [Engram](https://arxiv.org/abs/2601.07372) | learned table | not needed | yes, benchmarks |
 | [RETRO](https://arxiv.org/abs/2112.04426) | text chunks | same document | no |
+| [infini-gram](https://arxiv.org/abs/2401.17377), [kNN-LM](https://arxiv.org/abs/1911.00172) | next token, exact suffix | no | no |
 | This repo | next token | own token or page | **yes, known answer kinds** |
+| **SetGram (this repo)** | **next token, set of rare words in any order** | own token | **yes, reworded facts** |
 
 We found no gate trained during pretraining on whether the retrieved token is right. Engram has a learned gate with no separate target that we could find, and [kNN-Adapter](https://arxiv.org/abs/2302.10879) learns a per-token mix on top of a frozen model.
 

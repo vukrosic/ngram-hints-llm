@@ -28,6 +28,7 @@ p.add_argument("--tag", default="")
 p.add_argument("--drop", type=float, default=0.0, help="share of hints dropped in training")
 p.add_argument("--sites", default="0,1,2", help="where hints enter: 0 input, 1 middle, 2 output")
 p.add_argument("--use", default="0,1,2,3", help="which hint lengths to use, as indices of LEVELS")
+p.add_argument("--bag", type=int, default=0, help="1 = add order-free tables as hint levels 4, 5, 6 (sets of the last 2, 3, 4 content words)")
 a = p.parse_args()
 torch.manual_seed(0)
 SITES = {int(c) for c in a.sites.split(",")}; USE = [int(c) for c in a.use.split(",")]
@@ -37,6 +38,7 @@ PAD = 0; DIG = NAMES + 1; W = DIG + 10
 THE, OF, IS, FOR, WAS, PLUS, EQ, DOT, TALLER, THAN, WHO, TALLEST, Q, OWNS, WHAT, DOES, OWN = range(W, W + 17)
 REL = W + 17; V = REL + 4
 ANS = dict(fact=6, sum=3, chain=15, read=11)  # target position of each kind's answer
+BAGS = [2, 3, 4]; BAG_CACHE = os.path.join(HERE, "data", "facts_bag_rows.npz")
 BASE = np.uint64(1000003); C_EDGES = np.array([1, 2, 4, 8, 16, 64]); P_EDGES = np.array([0.25, 0.5, 0.75, 0.9, 0.9999])
 
 
@@ -95,8 +97,22 @@ def keys(X, n):
     return k
 
 
-def table(L, n):
-    X, Y = L[:, :-1], L[:, 1:]; k = keys(X, n); keep = (Y != PAD) & (k != 0)
+def bagkeys(X, n):
+    """Hash of the sorted last n content words (names, digits, relations) and whether the current word is one."""
+    content = (X >= 1) & (X < W) | (X >= REL); buf = np.zeros((X.shape[0], n), dtype=np.int64); cnt = np.zeros(X.shape[0], dtype=np.int64)
+    k = np.zeros(X.shape, dtype=np.uint64)
+    for t in range(X.shape[1]):
+        c = content[:, t]; buf[c] = np.roll(buf[c], -1, 1); buf[c, -1] = X[c, t]; cnt += c
+        h = np.full(X.shape[0], np.uint64(n) + np.uint64(7) * c.astype(np.uint64))
+        sb = np.sort(buf, 1).astype(np.uint64)
+        for j in range(n):
+            h = h * BASE + sb[:, j]
+        k[:, t] = np.where(cnt >= n, mix(h + np.uint64(99991)), 0)
+    return k
+
+
+def table(L, n, kf=None):
+    X, Y = L[:, :-1], L[:, 1:]; k = (kf or keys)(X, n); keep = (Y != PAD) & (k != 0)
     a = np.sort(k[keep] | Y[keep].astype(np.uint64))
     new = np.r_[True, a[1:] != a[:-1]]; idx = np.flatnonzero(new); cnt = np.diff(np.r_[idx, len(a)]).astype(np.uint64); u = a[idx]
     uk = u & np.uint64(0xffffffffffff0000); first = np.flatnonzero(np.r_[True, uk[1:] != uk[:-1]])
@@ -107,8 +123,8 @@ def table(L, n):
     return uk[first], (top & np.uint64(0xffff)).astype(np.int64), (top >> np.uint64(16)).astype(np.int64), (sec & np.uint64(0xffff)).astype(np.int64), (sec >> np.uint64(16)).astype(np.int64), tot.astype(np.int64)
 
 
-def lookup(t, L, n, loo):
-    K, t1, n1, t2, n2, tot = t; X, Y = L[:, :-1], L[:, 1:]; k = keys(X, n)
+def lookup(t, L, n, loo, kf=None):
+    K, t1, n1, t2, n2, tot = t; X, Y = L[:, :-1], L[:, 1:]; k = (kf or keys)(X, n)
     i = np.searchsorted(K, k).clip(0, len(K) - 1); hit = (K[i] == k) & (k != 0)
     if loo:
         own = Y; c = tot[i] - 1; a1 = t1[i].copy(); b = n1[i].copy()
@@ -120,8 +136,8 @@ def lookup(t, L, n, loo):
     return tok.astype(np.int32), kd.astype(np.uint8)
 
 
-def build():
-    t0 = time.time(); rng = np.random.default_rng(0)
+def lines():
+    rng = np.random.default_rng(0)
     held = np.array([(x, y) for x in range(10) for y in range(10)]); held = held[rng.permutation(100)]; test_pairs, train_pairs = held[:20], held[20:]
     n_rare = int(0.3 * NL) // 3; n_other = int(0.1 * NL) // 3; n_common = 300; n_kind = int(0.15 * NL)
     f = facts(rng, n_rare + n_other + n_common + NTEST)
@@ -130,11 +146,15 @@ def build():
              sums(rng, n_kind, train_pairs), chain(rng, n_kind), read(rng, n_kind)]
     L = np.concatenate(parts); reserved = np.zeros(len(L), bool); reserved[:6 * NTEST] = True  # the first 2000 rare facts are never trained on
     order = rng.permutation(len(L)); order = order[~reserved[order]]; stream = L[order[:POOL]]
-    print("lines", len(L), round(time.time() - t0, 1), flush=True)
     G = {"common_fact": (tell(common[rng.integers(0, n_common, NTEST)], 1), ANS["fact"]), "rare_table": (tell(rare[:NTEST], 1), ANS["fact"]),
          "rare_other_words": (tell(rare[NTEST:2 * NTEST], 2), ANS["fact"]), "fact_not_in_table": (tell(new, 1), ANS["fact"]),
          "held_out_sum": (sums(rng, NTEST, test_pairs), ANS["sum"]), "seen_sum": (sums(rng, NTEST, train_pairs), ANS["sum"]),
          "read_fresh": (read(rng, NTEST), ANS["read"]), "chain_fresh": (chain(rng, NTEST), ANS["chain"])}
+    return L, stream, G
+
+
+def build():
+    t0 = time.time(); L, stream, G = lines()
     out = dict(stream=stream)
     tt, tk = [], []; gt = {g: [] for g in G}; gk = {g: [] for g in G}
     for n in LEVELS:
@@ -149,9 +169,29 @@ def build():
     print("built", round(time.time() - t0, 1), flush=True)
 
 
+def build_bag():
+    t0 = time.time(); L, stream, G = lines(); out = {}; tt, tk = [], []; gt = {g: [] for g in G}; gk = {g: [] for g in G}
+    for n in BAGS:
+        t = table(L, n, bagkeys); s_, d = lookup(t, stream, n, True, bagkeys); tt.append(s_); tk.append(d)
+        for g, (m, _) in G.items():
+            s_, d = lookup(t, m, n, False, bagkeys); gt[g].append(s_); gk[g].append(d)
+        print("bag table", n, len(t[0]), round(time.time() - t0, 1), flush=True)
+    out.update(tt=np.stack(tt), tk=np.stack(tk))
+    for g in G:
+        out.update({f"{g}_tok": np.stack(gt[g]), f"{g}_kd": np.stack(gk[g])})
+    np.savez(BAG_CACHE, **out)
+
+
 if not os.path.exists(CACHE):
     build()
-D = np.load(CACHE); used = a.steps * a.batch
+D = dict(np.load(CACHE))
+if a.bag:
+    if not os.path.exists(BAG_CACHE):
+        build_bag()
+    B = np.load(BAG_CACHE)
+    for k_ in ["tt", "tk"] + [f"{g}_{x}" for g in ["common_fact", "rare_table", "rare_other_words", "fact_not_in_table", "held_out_sum", "seen_sum", "read_fresh", "chain_fresh"] for x in ("tok", "kd")]:
+        D[k_] = np.concatenate([D[k_], B[k_]])
+used = a.steps * a.batch
 stream = torch.as_tensor(D["stream"][:used]); TT = torch.as_tensor(D["tt"][:, :used].astype(np.int64)); TK = torch.as_tensor(D["tk"][:, :used].astype(np.int64))
 GROUPS = ["common_fact", "rare_table", "rare_other_words", "fact_not_in_table", "seen_sum", "held_out_sum", "read_fresh", "chain_fresh"]
 
@@ -191,7 +231,7 @@ class LM(nn.Module):
         s.blocks = nn.ModuleList(Block(a.width, a.heads) for _ in range(a.layers))
         s.norm = nn.RMSNorm(a.width)
         nn.init.normal_(s.emb.weight, std=a.width ** -0.5)
-        nk = len(LEVELS) * 42
+        nk = (len(LEVELS) + len(BAGS) * a.bag) * 42
         s.sigma = nn.Parameter(torch.zeros(nk)); s.beta = nn.Parameter(torch.zeros(nk, a.width)); s.alpha = nn.Parameter(torch.ones(3))
 
     def hint(s, tok, kd):

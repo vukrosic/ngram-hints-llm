@@ -1,37 +1,209 @@
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
-\usepackage{graphicx,booktabs,amsmath,hyperref}
+\usepackage{graphicx,booktabs,amsmath,amssymb,hyperref}
 \usepackage[T1]{fontenc}
-\title{N-gram Hints in Language Model Training}
+\title{SetGram: An N-gram Memory Keyed by Sets of Words Recalls Facts Asked in New Words\\[4pt]\large with a survey of memory in language models}
 \author{Vuk Rosi\'c}
 \date{}
 \begin{document}
 \maketitle
 
 \begin{abstract}
-An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s, but training uses only hints from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. In small Muon-trained models we show that this failure comes from a token's own occurrence in the counts: keeping it gives a validation loss of 3.53, while removing it and dropping half of the hints gives 1.80, against 1.89 for hints from earlier steps. On web text the token's whole page must be removed. That fix repairs validation loss but not learning. With its own occurrence removed, a model that always gets hints still memorizes almost nothing itself, and hints from a full table at all three places stop it from learning comparison. In a small test, a model that learned comparison first kept more of it after hints were added than a model trained with hints from the start. Training with 5\% to 60\% of the table and testing with all of it kept comparison at .97 or above and raised facts from .81 to about .88, with no switch and no second pass, which supports the record's choice of a small corpus in training. With test counts scaled, the limit follows how many copies of each training sentence the table holds, about 5, not table size. When one model trained on web text and reasoning together, a switch trained to predict whether each hint is right raised comparison from chance to at least .905 at three model sizes and lowered web text loss below plain hints by 0.04 to 0.09 at the longest training we ran. On a finished 2.5-billion-parameter model, whose weights we left unchanged, hints added 1.4 points to next-word accuracy on unseen Wikipedia text, recalled 6 of 11 new facts in their stored wording and 1 of 11 when reworded, and left comparison answers unchanged. On code from one source they added 1.7 to 17.7 points when the model read 128 tokens, and 0.8 to 8.6 points in the two cases rerun at 512 tokens; the gain rose with how often exact 6-token phrases repeat and with how low the model scored alone. All other models are small and each setting ran once. The code is public \cite{code}.
+Language models increasingly carry a memory beside their weights: a table looked up from the last few tokens. DeepSeek's Engram, the NanoGPT speedrun record's n-gram hints, infini-gram, kNN-LM and Memory Grafting all look up the last tokens in their exact order. We survey these methods and point out what they share: a fact stored as ``N was born in Paris'' cannot be found by the question ``Which city was N born in?'', because the words come in a different order. We propose SetGram, an n-gram table keyed by the sorted set of the last few rare words within a short window, in any order, which stores the most common next token as the exact table does. On 400 made-up biographies mixed into FineWeb text, small Muon-trained models with SetGram hints answered 81\% of questions in a never-seen wording about people they trained on and 80\% about people that appear only in the table, against 3\% to 7\% (chance about 4.5\%) for exact n-gram hints, an Engram-style hashed n-gram memory, CoCoNTs-style n-gram targets, a memory layer with product keys, and infini-gram-style mixing of an exact table at test time. Mixing the SetGram table into the output at test time reached 96\% and lowered web loss from 7.807 to 7.670. The recall grew from 50\% to 80\% over 4 times more steps and from 67\% to 79\% over 4 times more weights. On general web text SetGram adds little on top of a full exact table (0.003 to 0.010 loss), so it complements exact keys rather than replacing them. In the second part we study the exact hints of the record: a token's own count leaks its answer, and a full table in training stops the model from memorizing and from learning comparison; we test leave-one-out, a small training table and a taught switch as fixes, and measure hints on a finished 2.5-billion-parameter model. All models except the finished one are small, and each setting ran once. All code, including every baseline, is public \cite{code}.
 \end{abstract}
 
 \section{Introduction}
-Language models learn slowly from text they have seen only a few times, and web text is full of passages that repeat only occasionally. Brunborg \cite{brunborg} uses this: during training, idle CPUs build a corpus that records which tokens follow each n-gram. The model receives the most common next token as a hint and learns how much to trust it. The record went from 39.9 s to 6.7 s \cite{pr367}. The blog post reports two things that matter for this paper. A large hint corpus from the start makes the backbone rely on the hints too much, so training uses a small corpus and validation a large one. And each doubling of the corpus cuts the loss more than the last \cite{brunborg}.
+A language model stores facts in its weights, and it learns a fact well only after seeing it many times \cite{kandpal}. A growing line of work gives the model a second memory: a large table, built from text, that the model reads at each position. Engram adds hashed n-gram embeddings to DeepSeek-style models \cite{engram}; the NanoGPT speedrun record adds the most common next token after the last $n$ tokens of a corpus and cut the record from 39.9 s to 6.7 s \cite{brunborg,pr367}; infini-gram mixes a trillion-token n-gram table into a model's output \cite{infinigram}; kNN-LM retrieves stored hidden states \cite{knnlm}.
+
+These tables share one design choice: the key is the last tokens in their exact order. That choice is natural for predicting text, because a phrase that repeats word for word is the commonest thing a table can catch. It is a poor choice for facts. People ask about a fact in many wordings, and studies of knowledge in language models find that a model can answer questions about a fact only if it saw the fact in several wordings during training \cite{physics31}, and that reworded copies of a fact are retained better than exact repeats \cite{chang}. An exact table never sees the question's wording, so it cannot help.
+
+We ask whether a table keyed by the set of rare words, with order ignored, recovers these facts, and how it compares with the published kinds of memory. We make four contributions.
+\begin{enumerate}
+\item A survey of memory in language models, organized by what is stored, how it is keyed and where it enters the model (Section~\ref{sec:survey}). Every method we found keys a stored corpus by the exact order of the last tokens or by a learned vector.
+\item SetGram, a next-token table keyed by the sorted set of the last few rare words in a short window (Section~\ref{sec:setgram}). It changes only the key of the record's hints, so it reuses their training, trust and leave-one-out.
+\item A controlled test of reworded fact recall with web text loss measured on the same models, against simplified versions of five memory designs, all released as code (Section~\ref{sec:setresults}). SetGram recalls 80\% to 96\% of reworded facts where every other method stays at chance.
+\item A study of exact hints in training: leakage, memorizing, reasoning, and a finished model (Part~II).
+\end{enumerate}
+
+\part{Memory in Language Models, and SetGram}
+
+\section{A Survey of Memory in Language Models}\label{sec:survey}
+We group memories by what they store. Table~\ref{tab:survey} lists the methods with their key.
+
+\paragraph{Count tables of next tokens.} The oldest memory is the n-gram language model: counts of which token followed each run of $n-1$ tokens, smoothed across lengths \cite{kneserney}. Infini-gram \cite{infinigram} scales this to trillions of tokens with a suffix array, finds the longest exact suffix of the context that occurs in the corpus, and interpolates its next-token distribution with a neural model's output. The NanoGPT record \cite{brunborg,pr367} stores, for suffixes of 6, 10 and 20 tokens, the most common next token and its count. That token enters the model as a hint embedding at the input, the middle and the output, weighted by a trust learned per count and share bucket, during training as well as at test. CoCoNTs \cite{coconts} uses the same counts as a training target instead: the model is trained toward a mix of the true token and the corpus next-token distribution, and sees no table at inference.
+
+\paragraph{Learned tables keyed by n-grams.} Engram \cite{engram} hashes the last 2 and 3 tokens into large embedding tables, compresses case and accent variants first, and adds the looked-up vectors to the hidden state through a gate that reads the hidden state. It reports gains on knowledge and reasoning benchmarks at the scale of DeepSeek models. Follow-up work shares latents across n-gram embeddings \cite{tengram}, makes the latent codes discrete \cite{lngram}, factorizes the tables \cite{factorengram}, or extends the keys \cite{xgram}. TF-Engram \cite{tfengram} builds phrase tables without training and serves them from SSD. Earlier, N-Grammer \cite{ngrammer} added embeddings of bigram IDs over product-quantized latents, and the Over-tokenized Transformer \cite{overtok} and SCONE \cite{scone} add embeddings for multi-token n-grams to the input vocabulary. All of these key by the exact last tokens.
+
+\paragraph{Learned key-value memories.} Product-key memory \cite{pkm} replaces a feed-forward layer with a large table of learned values selected by two half-keys; Memory Layers at Scale \cite{memlayers} trains such layers in billion-parameter models and reports large gains on factual question answering. The key is a learned query from the hidden state, so the memory is not tied to a token order, but it holds only what training put into it: a fact the model never trained on cannot be in it.
+
+\paragraph{Stored hidden states.} kNN-LM \cite{knnlm} stores the hidden state at every position of a corpus with its next token, and at test time mixes the next tokens of the nearest stored states into the output. Memorizing Transformers \cite{memtrans} store keys and values of earlier context for attention. Memory Grafting \cite{grafting} finds the longest exact suffix match in a corpus and inserts the frozen hidden states stored there. The keys of kNN-LM are learned vectors, so a reworded context can in principle land near the stored one, but only if the model already maps both wordings to nearby states.
+
+\paragraph{Retrieved text.} RETRO \cite{retro} retrieves whole chunks of text by learned embeddings and reads them with cross-attention. In-context retrieval-augmented models put retrieved passages in the prompt, and a bag-of-words retriever such as BM25 works well there \cite{icralm}. Bag-of-words retrieval ignores order, so these systems answer reworded questions, but they pay with extra prompt tokens and a search step at every query, and they are not part of training.
+
+\paragraph{Order-free memory without a corpus.} Cache language models \cite{cache} raise the probability of words seen recently, whatever their order, and trigger models \cite{trigger} let any earlier word in the history predict the next word, through counted word pairs. NGM \cite{ngm} averages the embeddings of the last $n$ tokens without training, which also ignores order, but it stores no corpus and no next tokens.
+
+\paragraph{How models acquire facts.} Facts are recalled in proportion to how often they appear in pretraining \cite{kandpal}. A model trained on biographies in one wording memorizes them but cannot answer questions in another wording unless its training data held several wordings \cite{physics31}; models trained on ``A is B'' do not learn ``B is A'' \cite{reversal}. During pretraining, reworded copies of a fact are kept longer than exact repeats \cite{chang}. These results point to wording as the main obstacle between a stored fact and a question.
+
+\begin{table}[h]\centering\small
+\resizebox{\linewidth}{!}{\begin{tabular}{lllll}\toprule
+Method & Stores & Key & Order of key & New facts without retraining\\\midrule
+n-gram LM \cite{kneserney}, infini-gram \cite{infinigram} & next-token counts & last tokens & exact & yes\\
+NanoGPT record hints \cite{pr367} & top next token & last 6--20 tokens & exact & yes\\
+CoCoNTs \cite{coconts} & next-token counts & last tokens & exact & no (training target)\\
+Engram \cite{engram} and follow-ups & learned vectors & hashed last 2--3 tokens & exact & no\\
+N-Grammer, Over-tokenized, SCONE & learned vectors & n-gram IDs & exact & no\\
+Memory Grafting \cite{grafting} & frozen hidden states & longest suffix match & exact & yes\\
+kNN-LM \cite{knnlm} & hidden states, next token & learned vector & learned & yes\\
+Memory layers \cite{pkm,memlayers} & learned values & learned query & learned & no\\
+RETRO \cite{retro}, in-context RAG \cite{icralm} & text chunks & learned or bag of words & varies & yes, via the prompt\\
+Cache LM \cite{cache}, triggers \cite{trigger} & word counts & single history words & none & recent text only\\
+NGM \cite{ngm} & nothing (mean embedding) & last $n$ embeddings & none & no\\
+\textbf{SetGram (ours)} & \textbf{top next token} & \textbf{set of last rare words} & \textbf{none} & \textbf{yes}\\\bottomrule
+\end{tabular}}
+\caption{Memory in language models by what is stored and how it is keyed.}\label{tab:survey}
+\end{table}
+
+\paragraph{What is missing.} The methods that store a corpus and look it up inside the model key by exact order, and the methods that ignore order either store no corpus (NGM, cache) or put retrieved text in the prompt (bag-of-words RAG). We found no memory that keys a corpus's next tokens by an unordered set of words. Our searches covered the Engram line, n-gram language model variants, kNN-LM and retrieval work, and the names SetGram and BagGram, which we found unused.
+
+\section{SetGram}\label{sec:setgram}
+\paragraph{Key.} Let $V_{\text{common}}$ be the 500 most frequent tokens of the corpus; every other token is \emph{rare}. To predict token $x_{t+1}$, SetGram takes the last $n$ rare tokens among $x_{t-15},\dots,x_t$, sorts them, and hashes the sorted list together with $n$ and a flag that says whether $x_t$ itself is rare:
+\begin{equation}
+k_n(t)=\mathrm{hash}\big(n,\ [x_t\notin V_{\text{common}}],\ \mathrm{sort}(r_1,\dots,r_n)\big).
+\end{equation}
+If fewer than $n$ rare tokens lie in the window, there is no key. We use $n=2,3,4$. The flag separates positions right after a name (``N \ldots'') from positions after a common word (``born in \ldots''), which predict different things.
+
+\paragraph{Value.} As in the record, the table stores the most common next token after the key, its count and the total count, and a training position's own occurrence is subtracted from both (leave-one-out). The count falls into one of 7 buckets and the share of the top token into one of 6, giving 42 kinds per key length.
+
+\paragraph{Use in training.} The hint enters exactly as in the record:
+\begin{equation}
+H_t=\sum_{n}\big(\sigma_{k(n,t)}\,E[\mathrm{hint}_n(t)]+\beta_{k(n,t)}\big),
+\end{equation}
+added after the embedding, after the middle layer and before the output head, each with a learned scale. SetGram levels can sit beside exact levels in the same sum.
+
+\paragraph{Use at test time only.} A model trained without hints can use the table as infini-gram does: $p=(1-\lambda s)\,p_{\text{model}}+\lambda s\,\mathbb{1}[\text{hint}]$, where $s$ is the share of the longest available hint and $\lambda$ is chosen on web validation loss from $\{0.1,0.3,0.5,0.9\}$.
+
+\paragraph{Example.} The stored sentence ``N was born in Paris'' gives, at the position before ``Paris'', the rare-word set $\{$N, born$\}$ (``was'' and ``in'' are common) with the flag off. The test question ``Which city was N born in?'' gives the same set and flag before the answer, so the stored next token ``Paris'' returns. An exact key of any length differs: ``born in'' is shared by every person, and longer keys contain ``N was'' in one wording and ``N born'' in the other.
+
+\paragraph{Cost.} Building the keys is one pass over the corpus with a sliding buffer of rare tokens, and the table has the same layout as an exact table. Building exact and SetGram tables for 25M tokens took 27 s and 3 GB in NumPy.
+
+\section{Results: Reworded Facts}\label{sec:setresults}
+\subsection{Setup}
+\paragraph{Biographies in web text.} We made up 400 people with syllable names. Each has a birth city (30 choices), a university (17) and a company (28), written in four wordings, for example ``N was born in A.'' (wording 0), ``The city where N was born is A.'' (1), ``Where was N born? A.'' (2) and ``Which city was N born in? A.'' (3). Wording 0 of all 400 people is stored in the table. Wordings 1 and 2 of people 0 to 199 are training text; with \texttt{--once} each of them gets only one of these, so their facts appear in the table twice, like a rare web fact. People 200 to 399 appear only in the table. Wording 3 is the test and is never stored or trained. The table also holds the first 25M FineWeb training tokens.
+
+\paragraph{Model and training.} Width 32, 2 layers, 4 heads, RoPE, QK-norm, SwiGLU, RMSNorm and no biases; Muon on the hidden matrices and Adam on embeddings and memory tables. Each batch holds 6 FineWeb rows and 2 biography rows of 64 tokens, for 120 steps. Each setting ran once.
+
+\paragraph{Measures.} Web loss is the validation loss on 256 FineWeb rows with the memory on. Recall is the share of test questions where the right answer has the highest probability among all answers of its kind; chance is about 4.5\%.
+
+\paragraph{Baselines.} All are simplified re-implementations in one file, \texttt{bio\_run.py}, so they share the model, data and optimizer.
+\begin{itemize}
+\item \textbf{Exact hints} (record \#367): keys of 2, 3, 4 and 6 tokens, hints at three places.
+\item \textbf{Engram-style}: the last 2 and 3 tokens hashed into 50,021 buckets each, embeddings as wide as the model, a sigmoid gate from the dot product of the hidden state and the looked-up vector, added after the first block. No case compression.
+\item \textbf{CoCoNTs-style}: the longest exact hint joins the training target with weight equal to its share; no hints at test.
+\item \textbf{Memory layer}: product keys, 128 $\times$ 128 keys, 16,384 learned values, top 32 mixed by softmax, added after the first block.
+\item \textbf{Exact table mixed at test} (infini-gram style), on the model trained without memory.
+\end{itemize}
+
+\subsection{The table alone}
+Before any model, we check how often the top hint at the answer position is the right answer. Exact keys of 2 to 6 tokens are right on 0\% of test questions, because the test wording is never stored; on the stored wording the 6-token key is right on 98\%. SetGram keys of 4 rare tokens are right on 96\% of test questions and keys of 3 on 67\% to 79\%. So a reworded question can find its fact only through the set key.
+
+\subsection{Only SetGram recalls reworded facts}
+Table~\ref{tab:bio} and Figure~\ref{fig:recall} show the main result, with facts in the data twice. Every baseline stays between 3.0\% and 6.7\% on reworded questions, at chance. Exact hints and the exact table at test time recall the stored wording (.487 and .980), which shows that they work as intended and fail only because of the wording. SetGram hints in training reach .812 for people the model trained on and .795 for people only in the table. Mixing the SetGram table into the output of the model trained without memory reaches .963 and .958.
+
+\begin{table}[h]\centering\small
+\resizebox{\linewidth}{!}{\begin{tabular}{lrrrr}\toprule
+Memory & Web loss & Trained, new wording & Table only, new wording & Table only, stored wording\\\midrule
+None & 7.807 & .067 & .038 & .032\\
+Exact hints (record \#367) & 7.428 & .057 & .030 & .487\\
+Engram-style hashed 2- and 3-grams & 7.808 & .047 & .040 & .038\\
+CoCoNTs-style targets & 7.761 & .060 & .043 & .047\\
+Memory layer, product keys & 7.806 & .062 & .055 & .045\\
+Exact table mixed at test & 7.348 & .067 & .038 & .980\\
+\textbf{SetGram hints} & 7.886 & \textbf{.812} & \textbf{.795} & .757\\
+Exact + SetGram hints & 7.458 & .478 & .702 & .845\\
+\textbf{SetGram table mixed at test} & 7.670 & \textbf{.963} & \textbf{.958} & .958\\\bottomrule
+\end{tabular}}
+\caption{Facts in the data twice (\texttt{--once}). Width 32, 120 steps, one run each. Recall is the share of questions whose right answer is the top pick among answers of that kind (chance about .045).}\label{tab:bio}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=0.9\linewidth]{reworded_recall.png}
+\caption{Recall of a fact asked in a wording never stored or trained on (Table~\ref{tab:bio}).}\label{fig:recall}
+\end{figure}
+
+The Engram-style memory and the memory layer fail for different reasons. At the answer position the Engram key is the last 2 or 3 tokens, ``born in'' or ``was N born in'' with the words in a different order than in training, so it either names no person or never occurred. The memory layer can store facts only through training; people 200 to 399 were never trained on, and for trained people 120 steps were not enough for the model or the memory layer to learn them.
+
+\subsection{Two tables in training can mislead each other}
+Exact and SetGram hints together recalled only .478 for trained people. On the reworded question, short exact keys such as ``born in'' fire with the answer of whichever person was most common after them, and the model, which learned to trust exact hints for web text, follows them. In the made-up fact language of Part~II the same drop appears and grows with width (Table~\ref{tab:factsbag}). A gate that learns which table to trust per position, as the taught switch of Section~\ref{sec:block} does for exact hints, is the natural fix, which we did not test.
+
+\subsection{Facts stored once more: trust follows counts}
+With facts in the data three times (two training wordings plus the stored one), SetGram hints reached .923 for trained people but only .050 for people only in the table (Table~\ref{tab:bio3}). A table-only person's fact has count 1 in the table, and on web text a count-1 hint is almost always wrong, so the trust for that kind stays low. With facts in the data twice, trained facts also yield count-1 hints that are right, and the model learns to trust them. Mixing at test time, where the trust is a single number $\lambda s$, is not affected. In a real corpus, facts that matter appear with many counts, so this matters most for rare facts.
+
+\begin{table}[h]\centering\small
+\resizebox{\linewidth}{!}{\begin{tabular}{lrrrr}\toprule
+Memory & Web loss & Trained, new wording & Table only, new wording & Table only, stored wording\\\midrule
+None & 7.897 & .047 & .045 & .045\\
+Exact hints & 7.483 & .050 & .033 & .395\\
+Engram-style & 7.899 & .052 & .048 & .038\\
+CoCoNTs-style targets & 7.844 & .060 & .052 & .042\\
+Exact table mixed at test & 7.397 & .047 & .045 & .980\\
+\textbf{SetGram hints} & 7.944 & \textbf{.923} & .050 & .057\\
+Exact + SetGram hints & 7.500 & .898 & .005 & .287\\
+\textbf{SetGram table mixed at test} & 7.754 & \textbf{.963} & \textbf{.958} & .958\\\bottomrule
+\end{tabular}}
+\caption{Facts of trained people in the data three times. Width 32, 120 steps, one run each.}\label{tab:bio3}
+\end{table}
+
+\subsection{The recall grows with training and width}
+For people only in the table, SetGram hints recalled .50, .67 and .80 at 30, 60 and 120 steps, and at 60 steps .67, .77 and .79 at widths 32, 64 and 128 (1.2M to 5.0M weights). Exact hints at width 128 stayed at .043. The width range is 4 times and the step range 4 times; longer runs did not fit our 10-second budget per run. Since an exact key cannot match a reworded question at any model size, we expect the gap to stay at larger scale, but we did not test it.
+
+\subsection{The same result in a made-up language}
+The made-up fact language of Section~\ref{sec:facts} has 1000 rare facts stored in the table in one wording and asked in another, never trained on. Content words are names, digits and relations. Table~\ref{tab:factsbag} shows SetGram from .737 to .853 over 16 times more steps and 4 times more width, while exact hints stay at or below .010. On the stored wording, SetGram scores .76 to .86 against 1.0 for exact keys: the SetGram table itself is right on 88\%, and the rest are collisions where ``x y z'' and ``z y x'' share a key.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrrrr}\toprule
+Hints & W32, 50 steps & W32, 200 & W32, 800 & W64, 200 & W128, 200\\\midrule
+None & .000 & .009 & .011 & .009 & .015\\
+Exact & .009 & .007 & .005 & .010 & .008\\
+\textbf{SetGram} & \textbf{.737} & \textbf{.840} & \textbf{.850} & \textbf{.852} & \textbf{.853}\\
+Exact + SetGram & .684 & .762 & .778 & .649 & .634\\\bottomrule
+\end{tabular}
+\caption{Rare facts asked in a second wording, made-up language, 2 layers, right of 1000, one run each.}\label{tab:factsbag}
+\end{table}
+
+\subsection{On general web text SetGram adds little to exact keys}
+To see whether set keys also lower web loss, we built a variant that keeps the previous token exact and adds the set of the last 2 or 3 rare tokens, with a 25M-token table (Table~\ref{tab:webbag}). On top of the record's long keys of 6, 10 and 20 tokens, it lowered validation loss by .092 at 35 steps, shrinking to .047 at 140 steps and to .031 at width 96. On top of all exact lengths from 2 to 20 it added only .003 to .010: on general text, set keys mostly repeat what short exact keys already predict. Used alone in the biography runs, SetGram hints cost web loss (7.886 against 7.807 with no memory). SetGram is a memory for facts, to be added beside an exact table.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrrrrr}\toprule
+Steps, width & Exact 6,10,20 & + SetGram & Gain & Exact 2--20 & + SetGram & Gain\\\midrule
+35, 32 & 8.523 & 8.431 & .092 & 8.121 & 8.115 & .007\\
+70, 32 & 7.909 & 7.840 & .069 & 7.524 & 7.513 & .010\\
+140, 32 & 7.743 & 7.697 & .047 & 7.355 & 7.348 & .006\\
+70, 64 & 7.822 & 7.783 & .040 & 7.435 & 7.432 & .003\\
+70, 96 & 7.765 & 7.734 & .031 & 7.384 & 7.375 & .009\\\bottomrule
+\end{tabular}
+\caption{FineWeb validation loss with hints on, 2 layers, 25M-token table, one run each.}\label{tab:webbag}
+\end{table}
+
+\subsection{CoCoNTs reproduces in our toy}
+To check that our CoCoNTs-style baseline is not broken, we reproduced its web text gain. Training toward (1 $-$ w) the true token + w the table's longest-match token, with w $= T\times$ share, lowered validation loss with no table at test by .057, .063 and .071 at 35, 70 and 140 steps (T = 0.5, width 32) and by .063, .069 and .063 at widths 32, 64 and 96. So the baseline improves web text as published, and its failure on reworded facts comes from its exact keys.
+
+\subsection{Word sets on a finished model}
+We also tried word-set lookups on MiniCPM5-2B, unchanged (Section~\ref{sec:finished}), with a table of 1000 Wikipedia pages and 18 new made-up pages, on 18 reworded questions. Raising the scores of candidate answers found by whole-word keys gave 4 right against 1 with nothing; a 20-word snippet from the best match gave 7, the same as putting the best passage in the prompt (81 extra tokens against 28). A model that never trained with the table cannot tell which candidate answers the question, which supports training with SetGram hints rather than only adding them at inference to a model that never saw them.
+
+\part{Exact N-gram Hints in Training}
+
+\section{Leakage, Memorizing and Reasoning with Exact Hints}
+Brunborg \cite{brunborg} builds the record's hint corpus with idle CPUs during training. The model receives the most common next token as a hint and learns how much to trust it. The blog post reports two things that matter here. A large hint corpus from the start makes the backbone rely on the hints too much, so training uses a small corpus and validation a large one. And each doubling of the corpus cuts the loss more than the last \cite{brunborg}.
 
 The record's code computes training hints in a strictly causal way: a step's hints count only tokens trained in earlier steps \cite{repo}. That has a cost. At validation the model meets hints from a far larger corpus than any it trained with, so it must trust counts it has never seen.
 
-We ask whether a language model trained with Muon can use hints from the whole corpus from the first step, without the failure the blog post describes, and what hints do to memorizing and reasoning. We make four contributions.
-\begin{enumerate}
-\item We show that a token's own occurrence in the counts is enough to break training with a full corpus.
-\item We show that removing it, plus random hint dropout, beats causal hints at three model sizes on Shakespeare.
-\item We measure how the gain depends on the ratio of corpus size to tokens trained.
-\item We test what hints help, facts or reasoning, find what makes hints block reasoning, and test fixes on web text.
-\item We measure what hints do for a finished model whose weights stay unchanged.
-\end{enumerate}
-
-The main question is when a lookup table stops a model from learning. The answer has two parts. Removing a token's own occurrence fixes the failure in validation loss, so by that measure a full table is safe. It does not protect the model's own learning: with the occurrence removed, a full table in training still stops the model from memorizing and from learning comparison, and a small table in training, the record's choice, keeps comparison. So leave-one-out answers the loss problem, and Section~\ref{sec:block} answers the learning problem.
+We ask whether a language model trained with Muon can use hints from the whole corpus from the first step, without the failure the blog post describes, and what hints do to memorizing and reasoning. Removing a token's own occurrence fixes the failure in validation loss, so by that measure a full table is safe. It does not protect the model's own learning: with the occurrence removed, a full table in training still stops the model from memorizing and from learning comparison, and a small table in training, the record's choice, keeps comparison. The same leave-one-out, trust buckets and hint places are used by SetGram in Part~I.
 
 \section{Background}
 \paragraph{Muon.} Muon \cite{muon} is an optimizer for the matrices of a network. It keeps momentum, replaces the update with its nearest orthogonal matrix using Newton-Schulz steps, and moves the weights by a fixed step \cite{muonkimi}. Wang et al. \cite{wang} find that Muon learns rare classes better than Adam, the same rare-data problem hints address. Embeddings stay on Adam.
 
-\paragraph{Memory by lookup.} Engram \cite{engram} adds hashed n-gram embedding tables whose vectors are learned, and Tensorizing Engram \cite{tengram} and Lngram v2 \cite{lngram} extend this line. Hints differ: nothing is learned per n-gram, and the corpus stores only the next tokens. RETRO \cite{retro} retrieves whole text chunks from a very large database.
+\paragraph{Memory by lookup.} Section~\ref{sec:survey} surveys memory methods. Hints differ from Engram-style tables in that nothing is learned per n-gram, and the corpus stores only the next tokens.
 
 \paragraph{Leakage.} A count feature that includes the row's own label leaks the label, as in target encoding \cite{micci}. CatBoost \cite{catboost} fixes this with ordered statistics, which use only earlier rows, the same idea as causal hints. Leave-one-out statistics are the other common fix, and RETRO filters out neighbours from the same document \cite{retro}. Our searches found no paper comparing causal and leave-one-out hints for n-gram hints, and none using hint dropout, which follows dropout \cite{dropout}.
 
@@ -136,13 +308,13 @@ Steps & Tokens trained & No hints & Lengths 6, 10, 20 & All seven lengths\\\midr
 \caption{Validation loss at corpus 100M. Hints leave out the token's own page. The vocabulary grows with the steps (28,359, 39,394 and 46,243 tokens), so compare within a row.}\label{tab:long}
 \end{table}
 
-\section{Facts and Reasoning}
+\section{Facts and Reasoning}\label{sec:facts}
 Engram \cite{engram} reports gains on reasoning benchmarks as well as knowledge benchmarks, with learned tables, and RETRO's gains largely come from tokens shared with the test data \cite{norlund}. We found no test of retrieved next-token hints by task kind, so we built a language where the kind of each answer is known.
 
 \paragraph{Setup.} The corpus holds 1.5M lines of made-up text: rare facts stated 3 times each, common facts stated 300 times, sums modulo 10 with 20 of 100 pairs held out, two-step comparisons with fresh names, and reading an answer from the line. Hints use lengths 2, 3, 4 and 6, leave out each token's own occurrence, and enter after the embedding, after layer 2 and before the output head. The model has width 64 and 4 layers, and trains for 5760 steps of 32 lines at learning rate 0.02. We test 1000 new lines per group. Chance is 1\% for facts, about 10\% for sums and 50\% for reading and comparison, where always picking the first name scores that much.
 
 \begin{table}[h]\centering\small
-\begin{tabular}{lrrrrrrr}\toprule
+\resizebox{\linewidth}{!}{\begin{tabular}{lrrrrrrr}\toprule
 Hints & Common & Rare & Other words & Not in table & Held-out sum & Read & Comparison\\\midrule
 None & .995 & .009 & .005 & .013 & .492 & .480 & 1.000\\
 All 3 places & 1.000 & 1.000 & .010 & .004 & 0 & .502 & .495\\
@@ -151,7 +323,7 @@ Input only & 1.000 & 1.000 & .006 & .012 & 0 & .513 & .497\\
 Length 6 only, all 3 places & 1.000 & 1.000 & .012 & .010 & .730 & .474 & .499\\
 Output only & 1.000 & 1.000 & .010 & .003 & 0 & .924 & 1.000\\
 \textbf{Output only, half dropped} & \textbf{1.000} & \textbf{1.000} & \textbf{.006} & \textbf{.012} & \textbf{.536} & \textbf{.499} & \textbf{.999}\\\bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{Accuracy at the answer token.}\label{tab:facts}
 \end{table}
 
@@ -377,12 +549,12 @@ The lead depends on training length. At width 64 the switch is behind at 360 ste
 The closest work we found has no such target. Engram's gate reads the hidden state and the memory \cite{engram} and we found no separate target for it in the paper. kNN-Adapter learns a per-token mix on top of a frozen pretrained model \cite{knnadapter}, and SpecDec++ trains an acceptance head for speculative decoding at inference \cite{specdec}. We found no gate trained during pretraining on whether the retrieved token is right.
 
 \begin{table}[h]\centering\small
-\begin{tabular}{rrrrrrr}\toprule
+\resizebox{\linewidth}{!}{\begin{tabular}{rrrrrrr}\toprule
 Width & Web, no hints & Web, plain hints & Web, switch & Web, switch off & Comparison, plain/switch & Fact off\\\midrule
 32 & 7.132 & 6.824 & 6.781 & 7.082 & .496/.905 & .014\\
 64 & 6.991 & 6.714 & \textbf{6.644} & 6.952 & .496/1.000 & .621\\
 96 & 6.956 & 6.677 & \textbf{6.582} & 6.918 & .495/1.000 & .957\\\bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{One model on web text and the made-up language, 5760 steps, one run each. Fact off is a common fact with hints off in the switch model.}\label{tab:switchweb}
 \end{table}
 
@@ -451,8 +623,14 @@ A lookup took 0.66 ms per token in Python on the laptop, against 5.6 ms per toke
 \subsection{A finished model gains little on general text because exact matches are rare}
 The model does not already know this text: its top word is right only 41.7\% of the time on unseen Wikipedia. The gain is small because long exact matches are rare. Where all four hint lengths fire, 10\% of places, the top word gains 8.7 points, which is most of the 1.4 point total. Over training, the loss gain also shrinks as a model learns. The width-40 model gained 0.63 loss at 90 steps, 0.52 at 360 and 0.34 at 1,440, and contexts it had never seen gained 0.42 per token against $-$0.03 for contexts seen 64 or more times (Table~\ref{tab:modelseen}). The finished model gains 0.06 on Wikipedia. The comparison is rough: the text, table size and hint place all differ. Hints lower the loss most early in training, and at inference for repeated text that the model has not learned. The early drop is recall and not learning, because those models score worse than models trained with no hints when the hints are off.
 
+
 \section{Limits}
 \begin{itemize}
+\item SetGram was tested on templated rewordings of made-up facts. The key uses token identity, so a synonym (``birthplace'' for ``born'') or another language gives a different key; real paraphrase benchmarks are untested.
+\item SetGram keys collide: ``x y z'' and ``z y x'' share a key, and other facts with the same rare words give wrong hints. In the made-up language the table itself was right on 88\% of keys; real text has far more collisions.
+\item The rare words must lie within the 16 tokens before the predicted token, so facts whose subject is far from the answer are missed.
+\item The baselines are simplified re-implementations at a small scale, not the published systems. Engram's case compression, multi-head hashing and scale, and the memory layer's size and placement, may change their numbers, though not the fact that their keys depend on the exact last tokens or on training.
+\item The SetGram scaling covers 4 times the weights and 4 times the steps, below the 8 times we aim for.
 \item The web text models stop at a loss far above real models, so they do not show what hints do for a trained model. The largest joint model has 4.3M parameters.
 \item Each setting was run once, and learning rates were picked on the same validation chunks used for reporting.
 \item Reasoning in this paper means one comparison task in a made-up language, plus held-out sums. It does not stand for reasoning in general.
@@ -465,22 +643,25 @@ The model does not already know this text: its top word is right only 41.7\% of 
 \end{itemize}
 \section{Open Questions}
 \begin{enumerate}
+\item If a 1B-parameter model is trained with an exact n-gram table plus a SetGram table, does it answer reworded factual questions (for example paraphrased PopQA or biography benchmarks) better than with the exact table alone, at the same web loss?
+\item If Engram's hashed embeddings are keyed by sets of rare words instead of the last 2 and 3 tokens, does it keep its benchmark gains and add reworded-fact recall?
+\item If SetGram keys are built from word groups (stems, synonyms, or clusters of embeddings) instead of token identity, do paraphrases with different words also match?
+\item If a gate is taught to predict which table, exact or SetGram, has the right next token, does it remove the drop when both are used in training?
+\item If the trust of SetGram hints is learned on facts rather than on web text, do count-1 hints about facts held only in the table become usable in training?
 \item If a finished large model reads code with a table of that code, does a user accept more completions than with search over the same code?
-\item If hints match similar word groups instead of exact ones, do reworded questions recall new facts on a finished model?
 \item If a GPT-2-sized model is trained with Muon on web text, does adding n-gram hints from the training data lower validation loss compared with the same model without hints?
 \item If a model is trained on web text with a hint corpus about 500 times larger than the tokens it trains on, does leaving out the token's page and dropping half of the hints beat hints from earlier steps?
 \item If a model is trained on web text with hints, does each doubling of the hint corpus lower validation loss by more than the doubling before it, after near-duplicate documents are removed?
 \item If a model is trained with hints, does it repeat training text word for word more often than the same model without hints?
 \item If a model trains far longer than our web text runs, does the validation loss gain from short matches disappear?
-\item If a hint table drops n-grams that the model itself has already seen often, how much of the web text gain is kept?
 \item If a GPT-2-sized model is trained on web text with a switch taught to predict whether each hint is right, is its validation loss lower than with plain hints, and does the lead keep growing with training length?
-\item If the switch is trained with no pass without hints, does it still lower web text loss at long training?
-\item If a hint table is capped so that it holds at most a few copies of each passage, does a model trained on web text keep reasoning tasks and the web text gain?
 \item If a hint table holds passages the model trains on 15 or more times, does a model trained on web text lose reasoning skills that it keeps with 5 or fewer? Why does the hint at the word between two statements start the block in the toy?
 \item If a model is trained on web text and reasoning tasks with 10\% to 50\% of the hint table and tested with all of it, does it keep comparison and sums, and how much of the web text gain does it keep?
 \end{enumerate}
 
 \section{Conclusion}
+Every memory we surveyed that stores a corpus and reads it inside the model looks up the last tokens in their exact order, so it cannot find a fact asked in other words. Keying the same next-token table by the set of rare words fixes this: SetGram recalled 80\% to 96\% of reworded facts, including facts the model never trained on, where exact hints, Engram-style n-grams, CoCoNTs-style targets, a memory layer and test-time exact mixing stayed at chance. It adds little to web text loss on top of exact keys, so we recommend it as a second table beside an exact one, read at test time or through a gate that learns which table to trust.
+
 For hints from a full corpus, remove each token's own occurrence, and on web text remove its whole page. On Shakespeare, dropping half of the hints as well beat hints from earlier steps by about 0.08 at three sizes, and by more when the corpus was far larger than the tokens trained. On web text with the page left out, dropping hints did not help (7.825 against 7.816). If a run makes more than one pass, causal hints need the same removal. These steps fix validation loss only: a full table in training still stops the model from memorizing and from learning comparison. If hints must not replace the model's own learning, the simplest candidate is a small table in training and the full table at test time, which is the record's own choice. It kept comparison and improved facts in our small test but is untested on web text. With test counts scaled, the limit there was about 5 copies of each training sentence in the table, not table size; without scaling it did not hold at 14 names. The tested option on web text is to train every step with and without hints and add a switch trained to predict whether each hint is right. In our joint test this restored comparison with hints on and lowered web text loss further at the longest training, though sums stayed blocked with hints on. Hints at the output only need no second pass and keep reasoning, at the cost of part of the gain. These are small models and single runs, so all of this must be tested in real training on FineWeb.
 
 On a finished model, add hints only for text that repeats word for word and that the model has not learned. The share of exact 6-token matches is a cheap first filter, not a rule. Then measure loss with and without the table on held-out text at the context length you will use, and leave off any table that raises it. On general text the largest loss drops came early in training, and they are recall and not learning, because those models score worse with hints off than models trained with no hints.
@@ -515,5 +696,25 @@ On a finished model, add hints only for text that repeats word for word and that
 \bibitem{geometric} S. Ravfogel, G. Yehudai et al. Geometric Factual Recall in Transformers. arXiv:2605.12426.
 \bibitem{pidropout} Privileged Information Dropout in Reinforcement Learning. arXiv:2005.09220.
 \bibitem{rdrop} X. Liang, L. Wu et al. R-Drop: Regularized Dropout for Neural Networks. NeurIPS 2021.
+\bibitem{infinigram} J. Liu, S. Min, L. Zettlemoyer, Y. Choi, H. Hajishirzi. Infini-gram: scaling unbounded n-gram language models to a trillion tokens. COLM, 2024. arXiv:2401.17377.
+\bibitem{coconts} A. Sathe, S. Sarawagi. Efficient training of language models with compact and consistent next token distributions (CoCoNTs). arXiv:2407.02819, 2024.
+\bibitem{physics31} Z. Allen-Zhu, Y. Li. Physics of language models: part 3.1, knowledge storage and extraction. ICML, 2024. arXiv:2309.14316.
+\bibitem{chang} H. Chang et al. How do large language models acquire factual knowledge during pretraining? arXiv:2406.11813, 2024.
+\bibitem{reversal} L. Berglund et al. The reversal curse: LLMs trained on ``A is B'' fail to learn ``B is A''. arXiv:2309.12288, 2023.
+\bibitem{kneserney} R. Kneser, H. Ney. Improved backing-off for m-gram language modeling. ICASSP, 1995.
+\bibitem{trigger} R. Rosenfeld. A maximum entropy approach to adaptive statistical language modelling. Computer Speech and Language 10:187--228, 1996.
+\bibitem{cache} R. Kuhn, R. De Mori. A cache-based natural language model for speech recognition. IEEE TPAMI 12(6), 1990.
+\bibitem{ngm} Y. Qu et al. NGM: a plug-and-play training-free memory module for LLMs. arXiv:2605.16893, 2026.
+\bibitem{grafting} R. Cheng et al. Memory Grafting: scaling language model pre-training via offline conditional memory. arXiv:2605.20948, 2026.
+\bibitem{tfengram} Y. Ma et al. TF-Engram: a train-free Engram with SSD-backed memory for large language models. arXiv:2607.07388, 2026.
+\bibitem{factorengram} B. Yang et al. FactorEngram: factorized n-gram memory with basis-level gating for language models. arXiv:2609.35578, 2026.
+\bibitem{xgram} Y. Chen et al. Beyond n-gram: data-aware X-GRAM extraction for efficient embedding parameter scaling. arXiv:2604.21724, 2026.
+\bibitem{ngrammer} A. Roy et al. N-Grammer: augmenting transformers with latent n-grams. arXiv:2207.06366, 2022.
+\bibitem{overtok} H. Huang et al. Over-tokenized transformer: vocabulary is generally worth scaling. arXiv:2501.16975, 2025.
+\bibitem{scone} D. Yu et al. Scaling embedding layers in language models (SCONE). arXiv:2502.01637, 2025.
+\bibitem{pkm} G. Lample et al. Large memory layers with product keys. NeurIPS, 2019. arXiv:1907.05242.
+\bibitem{memlayers} V.-P. Berges et al. Memory layers at scale. ICML, 2025. arXiv:2412.09764.
+\bibitem{memtrans} Y. Wu et al. Memorizing transformers. ICLR, 2022. arXiv:2203.08913.
+\bibitem{icralm} O. Ram et al. In-context retrieval-augmented language models. TACL, 2023. arXiv:2302.00083.
 \end{thebibliography}
 \end{document}

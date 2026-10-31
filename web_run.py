@@ -29,10 +29,11 @@ p.add_argument("--cooldown", type=float, default=0.3)
 p.add_argument("--drop", type=float, default=0.0)
 p.add_argument("--val-chunks", type=int, default=256)
 p.add_argument("--tag", default="")
+p.add_argument("--target", type=float, default=0.0, help="> 0: the table's longest hint goes into the training target with weight target x its share, not into the model; the model never sees hints")
 p.add_argument("--dump", default="", help="save per-token validation losses to data/dump_<name>.npy")
 a = p.parse_args()
 torch.manual_seed(0)
-LV = [int(x) for x in a.levels.split(",")]
+LV = a.levels.split(",")
 R = [np.load(os.path.join(HERE, "data", f"rows_{n}.npz")) for n in LV]
 SIZES = R[0]["sizes"].tolist()
 used = a.steps * a.batch; nv = a.val_chunks
@@ -179,6 +180,7 @@ def val(tok, kd):
     return tot / n, hl / max(hn, 1), hn / n
 
 
+SHARE = torch.tensor([0.15, 0.37, 0.62, 0.82, 0.95, 1.0])  # middle of each share bucket of kind()
 t0 = time.time()
 for step in range(a.steps):
     i = np.arange(step * a.batch, (step + 1) * a.batch)
@@ -189,7 +191,14 @@ for step in range(a.steps):
         tok, kd = rm(TT[:, i]), torch.as_tensor(TK[:, i].astype(np.int64))
         if a.drop:
             tok = tok.where(torch.rand(tok.shape) > a.drop, torch.tensor(-1))
-    loss = F.cross_entropy(model(x, tok, kd).flatten(0, 1), y.flatten())
+    if a.target:
+        lp = F.log_softmax(model(x), -1); h = torch.full_like(y, -1); sh = torch.zeros(y.shape)
+        for L in range(tok.shape[0]):  # later levels are longer, so the longest match wins
+            m = tok[L] >= 0; h = torch.where(m, tok[L], h); sh = torch.where(m, SHARE[kd[L] % 6], sh)
+        w = a.target * sh * (h >= 0)
+        loss = -((1 - w) * lp.gather(-1, y[..., None])[..., 0] + w * lp.gather(-1, h.clamp(min=0)[..., None])[..., 0]).mean()
+    else:
+        loss = F.cross_entropy(model(x, tok, kd).flatten(0, 1), y.flatten())
     loss.backward()
     for o in opts:
         for g in o.param_groups:
@@ -201,7 +210,7 @@ for step in range(a.steps):
 train_s = time.time() - t0
 res = dict(vars(a), V=V, params=sum(w.numel() for w in model.parameters()), tokens=a.steps * a.batch * 64, train_s=round(train_s, 2), last_loss=round(loss.item(), 3))
 res["val_nohint"] = round(val(None, None)[0], 4)
-if a.policy != "none":
+if a.policy != "none" and not a.target:
     res["curve"] = [[SIZES[s], *[round(v, 4) for v in val(VT[s], VK[s])]] for s in ev]
     res["trust"] = [round(x.item(), 2) for x in model.alpha.detach()]
 if a.dump:

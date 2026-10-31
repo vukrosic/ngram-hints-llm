@@ -1,5 +1,173 @@
 # Results
 
+## SetGram: made-up biographies in web text (`bio_rows.py`, `bio_run.py`)
+
+**Data.** 400 made-up people with syllable names. Each has a birth city (30 choices), a university (17) and a company (28), in four wordings:
+
+| Wording | Example | Where it appears |
+|---|---|---|
+| 0 | " N was born in A." | the table, for all 400 people |
+| 1 | " The city where N was born is A." | training text, people 0 to 199 |
+| 2 | " Where was N born? A." | training text, people 0 to 199 (not with `--once`) |
+| 3 | " Which city was N born in? A." | test only, never stored or trained |
+
+With `--once`, each trained person gets one training wording, so their facts are in the table twice, like a rare web fact. The table holds the first 25M FineWeb training tokens, the packed training biographies and wording 0. Training rows are 4000 FineWeb rows of 64 tokens, with 2 biography rows in every batch of 8.
+
+**Keys.** Exact keys are the last 2, 3, 4 or 6 tokens. SetGram keys are the sorted set of the last 2, 3 or 4 rare tokens (outside the 500 most frequent) within the 16 tokens before, plus a flag for whether the token just before is rare. A training token's own count is left out of its hint.
+
+**Recall.** The right answer must be the top pick among all answers of that kind (chance about 4.5%), with the question as the prompt.
+
+**Model.** Width 32, 2 layers, 4 heads, RoPE, QK-norm, SwiGLU, RMSNorm, no biases. Muon for hidden matrices, Adam for embeddings and memory tables. 120 steps, one run per setting.
+
+**Baselines in `bio_run.py`** (simplified re-implementations, not the original code):
+
+| Arm | What it is |
+|---|---|
+| `none` | no memory |
+| `exact` | exact n-gram hints of the NanoGPT record #367, keys 2, 3, 4, 6 |
+| `bag` | SetGram hints, keys 2, 3, 4 |
+| `both` | exact and SetGram hints together |
+| `engram` | Engram-style (arXiv 2601.07372): hashed 2- and 3-token suffixes, 50,021 buckets each, sigmoid gate, added after the first block |
+| `target` | CoCoNTs-style (arXiv 2407.02819): the longest exact hint joins the training target with weight equal to its share; the model never sees hints |
+| `memory` | memory layer with product keys (arXiv 1907.05242, 2412.09764): 128 × 128 keys, 16,384 values, top 32, added after the first block |
+| `none` + test mix | infini-gram style (arXiv 2401.17377): at test, p = (1 − λs) p_model + λs on the hint token, s = the hint's share, λ chosen on web validation from .1, .3, .5, .9 |
+
+**The table alone, no model.** Share of test questions whose top hint at the answer is right:
+
+| Keys | Stored wording | New wording |
+|---|---|---|
+| Exact, 2 to 6 tokens | up to 98% (6 tokens) | 0% |
+| SetGram, 3 rare tokens | | 67% to 79% |
+| SetGram, 4 rare tokens | | 96% |
+
+**Facts in the data twice** (`--once`). Web loss is with the memory on.
+
+| Arm | Web loss | Trained people, new wording | Table-only people, new wording | Table-only people, stored wording |
+|---|---|---|---|---|
+| none | 7.807 | .067 | .038 | .032 |
+| exact hints | 7.428 | .057 | .030 | .487 |
+| Engram-style | 7.808 | .047 | .040 | .038 |
+| CoCoNTs-style target | 7.761 | .060 | .043 | .047 |
+| memory layer | 7.806 | .062 | .055 | .045 |
+| none + exact mix at test | 7.348 | .067 | .038 | .980 |
+| **SetGram hints** | 7.886 | **.812** | **.795** | **.757** |
+| exact + SetGram hints | 7.458 | .478 | .702 | .845 |
+| **none + SetGram mix at test** | 7.670 | **.963** | **.958** | **.958** |
+
+**Facts in the data three times** (default rows):
+
+| Arm | Web loss | Trained people, new wording | Table-only people, new wording | Table-only people, stored wording |
+|---|---|---|---|---|
+| none | 7.897 | .047 | .045 | .045 |
+| exact hints | 7.483 | .050 | .033 | .395 |
+| Engram-style | 7.899 | .052 | .048 | .038 |
+| CoCoNTs-style target | 7.844 | .060 | .052 | .042 |
+| none + exact mix at test | 7.397 | .047 | .045 | .980 |
+| **SetGram hints** | 7.944 | **.923** | .050 | .057 |
+| exact + SetGram hints | 7.500 | .898 | .005 | .287 |
+| **none + SetGram mix at test** | 7.754 | **.963** | **.958** | **.958** |
+
+Here table-only people fail with SetGram hints in training. Their hint has count 1, and on web text a count-1 hint is almost always wrong, so the model learns not to trust that kind. With facts in the data twice, trained facts also have count 1 hints that are right, and the model learns to trust them.
+
+**Scaling** (SetGram hints, `--once`, table-only people, new wording):
+
+| Steps (width 32) | 30 | 60 | 120 |
+|---|---|---|---|
+| Recall | .50 | .67 | .80 |
+
+| Width (60 steps) | 32 (1.2M weights) | 64 | 128 (5.0M weights) |
+|---|---|---|---|
+| SetGram hints | .67 | .77 | .79 |
+| exact hints | | | .043 |
+
+Width covers 4×, not 8×. 240 steps and more were not run (over the 10 s per run limit).
+
+```bash
+python3 bio_rows.py            # data/bio_rows.npz, 27 s, 3 GB peak
+python3 bio_rows.py --once     # data/bio_rows_once.npz
+for arm in none exact bag both engram target memory; do python3 bio_run.py --arm $arm --steps 120 --rows bio_rows_once; done
+for arm in none exact bag both engram target; do python3 bio_run.py --arm $arm --steps 120; done
+python3 bio_run.py --arm bag --steps 30 --rows bio_rows_once
+python3 bio_run.py --arm bag --steps 60 --width 128 --rows bio_rows_once
+```
+
+The `none` arm also prints the test-time mixes (`mix_exact`, `mix_bag`). It needs the two FineWeb files from the web text section below.
+
+## SetGram on the made-up fact language (`facts.py --bag 1`)
+
+Rare facts stored in the table in one wording, asked in another, never trained on. Content words are names, digits and relations. Right of 1000, 2 layers, hints at the input, middle and output:
+
+| Hints | Width 32, 50 steps | 200 steps | 800 steps | Width 64, 200 steps | Width 128, 200 steps |
+|---|---|---|---|---|---|
+| none | .000 | .009 | .011 | .009 | .015 |
+| exact | .009 | .007 | .005 | .010 | .008 |
+| **SetGram** | **.737** | **.840** | **.850** | **.852** | **.853** |
+| exact + SetGram | .684 | .762 | .778 | .649 | .634 |
+
+The same facts in the stored wording: exact 1.0, SetGram .76 to .86. The SetGram table itself is right on 88%; the rest are collisions, where "x y z" and "z y x" share a key.
+
+```bash
+python3 facts.py --hints 0 --bag 1 --use 0,1,2,3 --width 32 --layers 2 --steps 200   # none
+python3 facts.py --hints 1 --bag 1 --use 0,1,2,3 --width 32 --layers 2 --steps 200   # exact
+python3 facts.py --hints 1 --bag 1 --use 4,5,6 --width 32 --layers 2 --steps 200     # SetGram
+python3 facts.py --hints 1 --bag 1 --use 0,1,2,3,4,5,6 --width 32 --layers 2 --steps 200   # both
+```
+
+## SetGram keys on web text loss (`web_bag_rows.py`, `web_run.py`)
+
+This version keeps the previous token exact and adds the set of the last 2 or 3 rare tokens in the 16 before. 25M-token table, hints at the input, middle and output. Validation loss with hints on:
+
+| Steps, width | none | exact 6,10,20 (record) | + SetGram 2,3 | gain | exact 2 to 20 | + SetGram 2,3 | gain |
+|---|---|---|---|---|---|---|---|
+| 35, 32 | 8.532 | 8.523 | 8.431 | .092 | 8.121 | 8.115 | .007 |
+| 70, 32 | 7.925 | 7.909 | 7.840 | .069 | 7.524 | 7.513 | .010 |
+| 140, 32 | 7.755 | 7.743 | 7.697 | .047 | 7.355 | 7.348 | .006 |
+| 70, 64 | 7.841 | 7.822 | 7.783 | .040 | 7.435 | 7.432 | .003 |
+| 70, 96 | 7.778 | 7.765 | 7.734 | .031 | 7.384 | 7.375 | .009 |
+
+On general web text, SetGram keys mostly repeat what short exact keys already give. Their use is facts asked in other words.
+
+```bash
+python3 web_bag_rows.py 2; python3 web_bag_rows.py 3
+python3 web_run.py --policy loo --size 5 --levels 6,10,20,bag2,bag3 --width 32 --layers 2 --steps 70 --warmup 5
+```
+
+## CoCoNTs-style table targets on web text (`web_run.py --target`)
+
+The longest 2-, 3- or 4-token exact match gives its top next token. The training target becomes (1 − w) the true token + w the table token, with w = T × the table's share. The model never sees hints. Validation loss, no table:
+
+| Steps (width 32) | plain | T .25 | T .5 | T 1 |
+|---|---|---|---|---|
+| 35 | 8.636 | 8.597 | 8.579 | 8.571 |
+| 70 | 7.945 | 7.898 | 7.882 | 7.883 |
+| 140 | 7.764 | 7.712 | 7.693 | 7.696 |
+
+At 70 steps the gain at T .5 is .063, .069 and .063 at widths 32, 64 and 96.
+
+```bash
+python3 web_run.py --policy loo --target 0.5 --levels 2,3,4 --width 32 --layers 2 --steps 70 --warmup 5
+```
+
+## Word-set lookups on a finished model (`finished/bag.py`, `bag2.py`, `bag3.py`)
+
+MiniCPM5-2B, unchanged, with a table of 1000 Wikipedia pages plus 18 new made-up pages. 18 questions asked in new words. Whole words are the keys, page titles are added, and the best sentences give candidate answers.
+
+| What the model gets | Right of 18 | Extra prompt tokens |
+|---|---|---|
+| Nothing | 1 | 0 |
+| Candidate answers get a higher score | 4 | 0 |
+| 10-word snippet from the best match | 3 | 15 |
+| 20-word snippet | 7 | 28 |
+| 40-word snippet | 8 | 54 |
+| Retrieval, best passage in the prompt | 7 | 81 |
+
+A finished model that never trained with the table cannot tell which candidate answers the question. A 20-word snippet matched retrieval with a third of the extra prompt.
+
+```bash
+python3 finished/bag3.py --pages 1000
+python3 finished/bag3.py --pages 1000 --snip 10,20,40
+```
+
 Each setting was run once. Loss is cross-entropy on the next token; lower is better.
 
 ## How hints block reasoning (`gate.py`)
