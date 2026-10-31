@@ -42,9 +42,9 @@ Separate table, `python gate.py --arm always --split 1 --width 32`: the table re
 
 ### The limit follows copies in the table
 
-`python gate.py --arm always --small 1.0 --names 30 --width 32`. Name group means one ordered triple. The name rows hold the same table size.
+`python gate.py --arm always --small 1.0 --names 30 --width 32`. A copy is one more table line with the same names and the same statement order, so each triple has two versions. The name rows hold the same table size.
 
-| Setting | Copies of each name group | Width 32 | Width 128 |
+| Setting | Copies of each line | Width 32 | Width 128 |
 |---|---|---|---|
 | 14 names, full table | 35 | .552 | .560 |
 | 20 names, 500 steps | 7.9 | .552 | .884 |

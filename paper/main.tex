@@ -321,13 +321,13 @@ Share of table & Times the lines trained on & Width 32 & Width 64 & Width 128 & 
 \end{table}
 
 \subsection{The limit follows copies in the table, not table size}
-The break could depend on table size against the data trained on, or on how many copies of each example the table holds. We kept the same 84,000 table lines and 16,000 training lines and changed the number of names, which changes copies of each name group and nothing else (Table~\ref{tab:copies}). With 30 or 40 names the full table no longer blocks comparison, and facts rise to .97 and .99. Comparison is safe up to about 4 copies, erratic from 5 to 7, and blocked from about 7. Changing training steps fits copies better than the ratio: 2000 steps is 2.1 times the lines trained on, inside the safe ratio, but 5.8 copies, and gives the erratic .920 and .720.
+The break could depend on table size against the data trained on, or on how many copies of each line the table holds. We kept the same 84,000 table lines and 16,000 training lines and changed the number of names, which changes copies of each line and nothing else (Table~\ref{tab:copies}). With 30 or 40 names the full table no longer blocks comparison, and facts rise to .97 and .99. Comparison is safe up to about 4 copies, erratic from 5 to 7, and blocked from about 7. Changing training steps fits copies better than the ratio: 2000 steps is 2.1 times the lines trained on, inside the safe ratio, but 5.8 copies, and gives the erratic .920 and .720.
 
 Several explanations failed. Length 6 hints are the only ones that hold all three names, but without them the full table still blocks comparison (.504, .508 and .448 at widths 32, 64 and 128), and length 4 hints alone block it too (.492 and .501). Giving every hint one trust level, with no count or share signal, leaves the 100\% table blocked (.590, .529) and the 20\% table working (.982, .978), with facts at .89, so the count scaling above is not needed here. A 20\% table used in training and testing keeps comparison at 1.000 with facts at .66 and .75, so the block comes from the table in training and the full table at test adds only facts. In a blocked model, removing the hint at the word ``top'' raises held-out comparison from .52 to .80 at width 32 and from .50 to .61 at width 128. We do not yet know why many copies block the skill.
 
 \begin{table}[h]\centering\small
 \begin{tabular}{lrrr}\toprule
-Setting & Copies of each name group & Width 32 & Width 128\\\midrule
+Setting & Copies of each line & Width 32 & Width 128\\\midrule
 14 names, full table & 35 & .552 & .560\\
 20 names, 500 steps & 7.9 & .552 & .884\\
 20 names, full table & 7.2 & .523 & .503\\
@@ -337,7 +337,7 @@ Setting & Copies of each name group & Width 32 & Width 128\\\midrule
 30 names, full table & 1.8 & \textbf{.999} & \textbf{1.000}\\
 40 names, full table & 0.7 & \textbf{1.000} & \textbf{1.000}\\\bottomrule
 \end{tabular}
-\caption{Comparison with hints always on, one run each. The 14, 20, 30 and 40 name full tables hold the same number of lines. A name group here is one ordered triple.}\label{tab:copies}
+\caption{Comparison with hints always on, one run each. The 14, 20, 30 and 40 name full tables hold the same number of lines. A copy here is one more table line with the same three names in the same order and the same statement order, so each triple has two versions.}\label{tab:copies}
 \end{table}
 
 \subsection{A switch learns to shut hints only when taught}
