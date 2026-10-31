@@ -22,7 +22,7 @@ Code for the paper in [`paper/main.pdf`](paper/main.pdf).
 - **Training every step with and without hints fixes most of this.** In a joint test it kept 96% of the web gain and restored reasoning with hints off, for 47% more clock time. Reasoning with hints on stayed blocked, and common facts did not come back.
 - **Training with hints removes the skill; hints alone barely hurt it.** A model that had already learned comparison lost 0 to 19 points when hints came on at full strength, then fell to 50% to 87% after more training with them.
 - **Train with a small table and test with the full one.** With 5% to 60% of the table in training (0.25 to 3 times the lines trained on), comparison stayed at 97% or above at three widths and facts rose from 81% to about 88%, with no switch and no second pass. From 70% to 95% results jumped around, and with the largest table comparison was back at chance. 
-- **The limit is copies in the table, not table size.** With the same table size, comparison was blocked at 7 copies of each line and 100% at 1.8 copies or fewer. It was safe up to about 4 copies at two widths. We do not know why many copies block the skill.
+- **The limit is copies of the training sentences in the table, not table size.** Up to 5 copies comparison stayed at .95 or above across 14 to 40 names, and at 15 or more copies most runs stayed near .50. 60 copies of sentences the model does not train on did no harm. A blocked model just says the first name in the line, and it does well on a new sentence only after that sentence enters the table 30 times, so it never learned to compare. We do not know the full mechanism.
 - **Teach a switch to predict whether each hint is right.** Learned from the loss alone it stayed fully on. Taught, at widths 32, 64 and 96 it raised comparison from chance to 90.5%, 100% and 100%, and beat plain hints on web loss by 0.04, 0.07 and 0.09 at 5760 steps. It was behind at 360 steps and level at 1440. Sums with hints on stayed blocked.
 - **Hints help text the model itself has not seen.** On web text the gain per token fell to zero once the model had seen the context 64 times.
 - **On web text most of the gain comes from short matches of 2 and 3 tokens**, and that gain shrinks as training gets longer.
@@ -43,7 +43,7 @@ Hints added at the input let the model skip the task. Adding hints only at the o
 
 ## Train with a small hint table if the model must reason
 
-The hint table can solve training lines, so the model may never need to learn the skill. Train with 5% to 60% of the table, then give it the full table at test time. Facts stay in the table, so the model still learns to trust hints. What matters is how many copies of each example the table holds, so keep that to a few. The record already trains with a small corpus; this test adds that the choice can protect reasoning.
+The hint table can solve training lines, so the model may never need to learn the skill. Train with 5% to 60% of the table, then give it the full table at test time. Facts stay in the table, so the model still learns to trust hints. What matters is how many copies of each training sentence the table holds, so keep that to 5 or fewer, or build the table from different text. The record already trains with a small corpus; this test adds that the choice can protect reasoning.
 
 ---
 

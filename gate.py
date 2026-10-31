@@ -10,7 +10,7 @@ its own place, so it needs no second pass). Switches set by hand on comparison l
 noanswer (off at the answer word only), answeronly (on at the answer word only), noline (off on the whole line),
 nogt, noname, nodot (off at those words only), nofirstdot (off at the dot between the two statements only).
 Hints with the always arm: --late N --freeze M (no hints for N steps, then only trust trains for M steps), --small F (training table reads F of the
-lines not trained on, testing reads all, --testsmall 1 keeps it at testing), --names N sets copies in the table, --levels, --nokind, --dropline, --probe test the cause, --split 1 (table reads one half of the name triples, training uses the other half), --unique 1 (each triple on one line).
+lines not trained on, testing reads all, --testsmall 1 keeps it at testing), --names N and --chains N set copies in the table, --levels, --nokind, --dropline, --probe, --cut, --pool, --testseen test the cause, --split 1 (table reads one half of the name triples, training uses the other half), --unique 1 (each triple on one line).
 """
 import argparse, json, math, os, time
 import numpy as np, torch, torch.nn as nn, torch.nn.functional as F
@@ -45,12 +45,17 @@ p.add_argument("--levels", default="", help="keep only these hint lengths, 0 to 
 p.add_argument("--dropline", type=float, default=0, help="this share of training comparison lines loses its length 6 hints")
 p.add_argument("--measure", type=int, default=0, help="1 = print the share of training lines with no length 6 hint, then stop")
 p.add_argument("--nokind", type=int, default=0, help="1 = every hint gets the same trust, no count or share signal")
+p.add_argument("--chains", type=int, default=0, help="comparison lines to make, the table reads those not trained on, sets copies of each line")
+p.add_argument("--cut", default="", help="no hints at these word positions on comparison lines")
+p.add_argument("--pool", type=int, default=0, help="training repeats this many comparison lines")
+p.add_argument("--countscale", type=int, default=0, help="1 with --chains = scale test counts by table lines over all lines")
+p.add_argument("--testseen", type=int, default=0, help="the table used at testing also holds this many copies of each test line")
 p.add_argument("--every", type=int, default=0, help="print comparison this often")
 p.add_argument("--two", type=int, default=0, help="1 = every step also trains without hints")
 p.add_argument("--tag", default="")
 a = p.parse_args()
 torch.manual_seed(0); torch.set_num_threads(1); rng = np.random.default_rng(0)
-PAD = 0; N = a.names; GT, DOT, TOP, Q, IS = range(N + 1, N + 6); V = N + 6; T = 12; LV = [2, 3, 4, 6]; COPIES = 5; NCHAIN = 100_000
+PAD = 0; N = a.names; GT, DOT, TOP, Q, IS = range(N + 1, N + 6); V = N + 6; T = 12; LV = [2, 3, 4, 6]; COPIES = 5; NCHAIN = a.chains or 100_000
 FPOS, CPOS = 3, 9; BASE = np.uint64(1000003); C_EDGES = np.array([1, 2, 4, 8, 16, 64]); P_EDGES = np.array([0.25, 0.5, 0.75, 0.9, 0.9999])
 SITES = {int(c) for c in a.sites.split(",")} if a.sites else {2} if a.arm == "output" else {1, 2} if a.arm == "inline" else {0, 1, 2}
 HAND = ("noanswer", "answeronly", "noline", "nogt", "noname", "nodot", "nofirstdot"); HINTS = a.arm != "none"; TWO = a.two or a.arm in ("both", "switch", "right") + HAND
@@ -82,7 +87,7 @@ if a.split:
 corpus = np.concatenate([np.repeat(F_L, COPIES, 0), C_T])
 half = a.batch // 2; need = a.steps * half
 stream = np.empty((a.steps * a.batch, T + 1), dtype=np.int64)
-stream[::2] = F_L[rng.integers(0, a.facts, need)]; stream[1::2] = C_L[np.arange(need) % len(C_L)]
+stream[::2] = F_L[rng.integers(0, a.facts, need)]; stream[1::2] = C_L[np.arange(need) % (a.pool or len(C_L))]
 
 
 def mix(k):
@@ -132,13 +137,15 @@ def hints(M, own):
 
 CS = 1.0; TABLES = [table(m) for m in LV]
 if a.small:
-    full = TABLES; rows = np.repeat(F_L, COPIES, 0); spare = C_L[need:]
+    full = TABLES; corpus0 = corpus; rows = np.repeat(F_L, COPIES, 0); spare = C_L[need:]
     corpus = np.concatenate([rows[rng.random(len(rows)) < a.small], spare[rng.random(len(spare)) < a.small]]); TABLES = [table(m) for m in LV]
     TT, TK = hints(stream, False)
     if not a.testsmall:
-        TABLES = full; CS = a.small
+        TABLES = full; CS = a.small * (len(spare) / len(C_T) if a.countscale else 1)
 else:
     TT, TK = hints(stream, True)
+if a.testseen:
+    corpus = np.concatenate([corpus0, np.repeat(C_TEST, a.testseen, 0)]); TABLES = [table(m) for m in LV]
 FT, FK = hints(F_L, False); CT, CK = hints(C_TEST, False)
 if a.min_share:
     TT, FT, CT = (t.where(k % 6 >= a.min_share, torch.tensor(-1)) for t, k in ((TT, TK), (FT, FK), (CT, CK)))
@@ -149,6 +156,9 @@ if a.levels:
         TT[L] = -1; FT[L] = -1; CT[L] = -1
 if a.nokind:
     TK[:] = 0; FK[:] = 0; CK[:] = 0
+if a.cut:
+    for w in a.cut.split(","):
+        TT[:, 1::2, int(w)] = -1; CT[:, :, int(w)] = -1
 if a.dropline:
     TT[3, np.flatnonzero((rng.random(len(stream)) < a.dropline) & (np.arange(len(stream)) % 2 == 1))] = -1
 S, FL, CL, CT_ABC = torch.as_tensor(stream), torch.as_tensor(F_L), torch.as_tensor(C_TEST), torch.as_tensor(TEST_T)
@@ -303,7 +313,8 @@ def report(M, pos, tok, kd):
         o, _, logit = model(x, tok, kd); on = o[:, pos].argmax(-1)
         r.update(on=(on == y).float().mean().item(), follows=(on == last).float().mean().item())
         if pos == CPOS:
-            first = x[:, 0]; r.update(picks_first_name=(on == first).float().mean().item(), picks_middle=(on == CT_ABC[:, 1]).float().mean().item(), picks_last=(on == CT_ABC[:, 2]).float().mean().item())
+            first = x[:, 0]; hid_ = first == y; r.update(a_hidden=(on == y)[hid_].float().mean().item(), a_shown=(on == y)[~hid_].float().mean().item())
+            r.update(picks_first_name=(on == first).float().mean().item(), picks_middle=(on == CT_ABC[:, 1]).float().mean().item(), picks_last=(on == CT_ABC[:, 2]).float().mean().item())
         if logit is not None:
             r["switch"] = logit[:, pos].sigmoid().mean().item()
             if pos == CPOS:
@@ -355,7 +366,7 @@ if a.probe:
             o = torch.full_like(t, -1); o[:, :, w] = t[:, :, w]; only.append(acc(M, o, k))
         print(f"  {name} all {acc(M, t, k)} remove one position {drop} keep one position {only}", flush=True)
 s_ = round(time.time() - t0, 1)
-res = dict(vars(a), fact=report(FL, FPOS, FT, FK), comp=report(CL, CPOS, CT, CK), seconds=s_, last_loss=round(loss.item(), 3))
+res = dict(vars(a), fact=report(FL, FPOS, FT, FK), comp=report(CL, CPOS, CT, CK), train=report(S[1::2][:1000], CPOS, TT[:, 1::2][:, :1000], TK[:, 1::2][:, :1000]), seconds=s_, last_loss=round(loss.item(), 3))
 print(f"{a.arm:8} facts {res['fact']}  comparison {res['comp']}  {s_}s", flush=True)
 with open(os.path.join(HERE, "gate_results.jsonl"), "a") as f:
     f.write(json.dumps(res) + "\n")

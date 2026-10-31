@@ -57,6 +57,36 @@ Separate table, `python gate.py --arm always --split 1 --width 32`: the table re
 
 Explanations that failed: without length 6 hints the full table still blocks (`--levels 0,1,2`: .504, .508, .448 at widths 32, 64, 128), length 4 alone blocks (.492, .501), and one trust level for every hint (`--nokind 1`) gives .590, .529 at 100% and .982, .978 at 20%, facts .89. A 20% table in training and testing (`--testsmall 1`) keeps comparison at 1.000 with facts .662 and .750. Removing the hint at the word "top" from a blocked model (`--probe 1`) raises held-out comparison from .52 to .80 at width 32 and .50 to .61 at width 128.
 
+### Copies of the training sentences block the skill at every name count
+
+`python gate.py --arm always --small 1 --names 30 --chains 716000 --countscale 1 --width 32`. Lines made = training lines + 2 x (triples - 1000) x copies. Cells are width 32 / width 128.
+
+| Names | 1 copies | 2 copies | 4 copies | 5 copies | 7 copies | 10 copies | 15 copies | 30 copies |
+|---|---|---|---|---|---|---|---|---|
+| 14 | .95/.95 | .99/.99 | 1.0/1.0 | .99/.99 | .96/.98 | .56/.53 | .98/.50 | .54/.57 |
+| 20 | 1.0/1.0 | 1.0/1.0 | 1.0/1.0 | 1.0/1.0 | .81/.98 | .51/.71 | .69/.52 | .65/.48 |
+| 30 | 1.0/1.0 | 1.0/1.0 | 1.0/.99 | .99/.99 | .99/.93 | 1.0/.54 | .51/.49 | .48/.51 |
+| 40 | 1.0/1.0 | 1.0/1.0 | 1.0/1.0 | 1.0/1.0 | .99/1.0 | .84/.49 | .48/.48 | -- |
+
+Without `--countscale 1`, comparison at 14 names falls to .51 to .72 at 1 to 7 copies, and facts are .73 at 14 names and .89 at 20 names. With it, facts at few copies are about .1 to .2 at those name counts.
+
+| Test (20 names, 30 copies unless stated) | Width 32 | Width 128 |
+|---|---|---|
+| Default | .654 | .483 |
+| Table reads other triples, 17 copies (`--split 1`) | 1.000 | 1.000 |
+| Table reads other triples, 60 copies | 1.000 | 1.000 |
+| 40 names, 2 copies, 1000 lines trained 16 times (`--pool 1000`) | .999 | 1.000 |
+| Test lines added to the test table 30 times (`--testseen 30`) | 1.000 | 1.000 |
+| Test lines added 7 times | .671 | .483 |
+| No hint at the first dot (`--cut 3`) | .953 | 1.000 |
+| No hint at the second dot (`--cut 7`) | .915 | .483 |
+| Only the answer hint kept | .996 | .999 |
+| No answer hint (`--cut 9`) | .483 | .648 |
+
+A blocked model on held-out lines scores about 1.00 when the answer is the first word and about .00 otherwise. `--cut 3` at 14, 30 and 40 names: .917/.531, .946/.993, .908/1.000. Removing the hint at words 0, 1, 2, 4, 5, 6 or 8 left it blocked at both widths or one.
+
+At 30 names, 2 copies gives 1.000 at widths 32, 64, 128, 256, at 4 layers and at 4000 steps. At 30 copies: .483, .491, .510, .483 at those widths, .995 at 4 layers width 64, and at 4000 steps .973 at width 32 and .502 at width 128.
+
 ## Hints set by hand, and a switch (`gate.py`, `mixed.py`)
 
 Small test: width 32, 2 layers, 1000 steps, half facts and half comparison lines, "a > b . b > c . top ? a .", about 5 seconds, one run each. Hints set by hand at chosen words of comparison lines, in training and testing. Every row trains each step with and without hints. Accuracy is comparison with hints on.
