@@ -9,7 +9,7 @@
 \maketitle
 
 \begin{abstract}
-An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s, but training uses only hints from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. In small Muon-trained models we show that this failure comes from a token's own occurrence in the counts: keeping it gives a validation loss of 3.53, while removing it and dropping half of the hints gives 1.80, against 1.89 for hints from earlier steps. On web text the token's whole page must be removed. Hints give perfect recall of stored facts, but a model that always gets hints memorizes almost nothing itself, and hints at all three places stop it from learning comparison. In a small test, hints at full strength barely hurt a model that has already learned comparison, but further training with them removes the skill. Training with 5\% to 60\% of the table and testing with all of it kept comparison at .97 or above and raised facts from .81 to about .88, with no switch and no second pass. The limit follows how many copies of each training sentence the table holds, not table size. When one model trained on web text and reasoning together, a switch trained to predict whether each hint is right raised comparison from chance to at least .905 at three model sizes and lowered web text loss below plain hints by 0.04 to 0.09 at the longest training we ran. All models are small and each setting ran once. The code is public \cite{code}.
+An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s, but training uses only hints from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. In small Muon-trained models we show that this failure comes from a token's own occurrence in the counts: keeping it gives a validation loss of 3.53, while removing it and dropping half of the hints gives 1.80, against 1.89 for hints from earlier steps. On web text the token's whole page must be removed. Hints give perfect recall of stored facts, but a model that always gets hints memorizes almost nothing itself, and hints at all three places stop it from learning comparison. In a small test, hints at full strength barely hurt a model that has already learned comparison, but further training with them removes the skill. Training with 5\% to 60\% of the table and testing with all of it kept comparison at .97 or above and raised facts from .81 to about .88, with no switch and no second pass. The limit follows how many copies of each training sentence the table holds, not table size. When one model trained on web text and reasoning together, a switch trained to predict whether each hint is right raised comparison from chance to at least .905 at three model sizes and lowered web text loss below plain hints by 0.04 to 0.09 at the longest training we ran. On a finished 2.5-billion-parameter model, whose weights we left unchanged, hints added 1.4 points to next-word accuracy on unseen Wikipedia text, recalled new facts only in their stored wording, and left comparison answers unchanged. On code from one source they added 1.7 to 17.7 points when the model read 128 tokens, and 0.8 to 8.6 points in the two cases rerun at 512 tokens; the gain followed how often exact 6-token phrases repeat. All other models are small and each setting ran once. The code is public \cite{code}.
 \end{abstract}
 
 \section{Introduction}
@@ -383,16 +383,84 @@ Width & Web, no hints & Web, plain hints & Web, switch & Web, switch off & Compa
 \caption{One model on web text and the made-up language, 5760 steps, one run each. Fact off is a common fact with hints off in the switch model.}\label{tab:switchweb}
 \end{table}
 
+\section{Hints on a Finished Model}\label{sec:finished}
+All earlier sections train the model with hints. Here we leave a finished model unchanged and only raise the output score of each hinted token, so training cannot remove a skill. The model is MiniCPM5-2B (2.5 billion parameters, 42 layers, Apache 2.0), in its 4-bit MLX form on a laptop. The closest earlier work is kNN-Adapter \cite{knnadapter}, which mixes a finished model's output with retrieval from a target-domain store.
+
+The table stores the most common next token after word groups of 2, 3, 4 and 6 tokens. A learned trust number sets how far each hint raises the score. It depends on the hint length, how often the group was seen, how often that token followed it, and how likely the model already thinks that token is. Trust has 840 numbers and trains in about a second from about 10,000 places. Table, trust and test text never share a file or page. The model reads 128 tokens at a time and each setting ran once on about 8,000 test places unless stated. All code is in \texttt{finished/}.
+
+\subsection{Hints recall stored text but miss reworded questions}
+The table read 70\% of about 52,000 Wikipedia pages from an April 2026 copy \cite{wikicopy}, plus 48 pages about 2026 events; 27.6M tokens and 24.8M groups of 6 tokens. Trust trained on 15\% of the pages and the test used the rest (18,840 places).
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lrr}\toprule
+Test & Hints off & Hints on\\\midrule
+Unseen Wikipedia text, next word right & 41.7\% & 43.1\%\\
+Unseen Wikipedia text, loss & 3.145 & 3.086\\
+2026 pages stored in the table, next word right & 41.6\% & 83.0\%\\
+11 new facts, the page's own words & 1 right & 6 right\\
+The same 11 facts, reworded & 1 right & 1 right\\
+100 comparison questions (three names) & 54 right & 54 right\\
+100 two-digit sums & 1 right & 1 right\\
+\bottomrule\end{tabular}
+\caption{MiniCPM5-2B with and without hints. No comparison answer changed. The 4-bit model given a bare sum fails with or without hints, so the sums say nothing about harm.}\label{tab:finished}
+\end{table}
+
+The 11 facts were written by hand from pages in the table, once in the page's own words and once in other words. A reworded question misses the stored word group or meets a wrong hint: ``the operating system on the Acer Googlebook 14 is'' went from ``Windows 10'' to ``a Linux-based'', and the page says Google. For new facts asked in new words, search over documents remains the better tool.
+
+\subsection{The gain follows how often the exact words repeat}
+We repeated the test on other text, with a new table and trust each time. Table~\ref{tab:domains} is sorted by the share of places where a 6-token hint exists.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrrr}\toprule
+Text, table and test from different files & Table tokens & Off & On & 6-token hint\\\midrule
+transformers code, unseen model folders & 6.3M & 66.2\% & \textbf{83.9\%} & 81\%\\
+transformers code & 5.3M & 65.7\% & \textbf{79.2\%} & 69\%\\
+pandas code & 3.8M & 67.0\% & 68.9\% & 38\%\\
+sympy code & 6.0M & 64.4\% & 67.9\% & 35\%\\
+sklearn code & 2.4M & 64.8\% & 68.0\% & 34\%\\
+networkx code & 1.3M & 65.2\% & 68.7\% & 33\%\\
+scipy code & 4.3M & 61.3\% & 63.0\% & 24\%\\
+Own Markdown notes, exact copies removed & 5.6M & 32.1\% & \textbf{43.1\%} & 20\%\\
+sympy code, 10\% of table & 0.45M & 64.4\% & 65.1\% & 13\%\\
+Wikipedia, full table & 27.6M & 41.7\% & 43.1\% & 10\%\\
+Wikipedia, 10\% of table & 2.6M & 42.0\% & 42.6\% & 4\%\\
+Table from transformers, test on torch & 7.3M & 58.6\% & 58.4\% & 4\%\\
+sympy code, 1\% of table & 0.04M & 64.4\% & 64.4\% & 3\%\\
+Wikipedia, 1\% of table & 0.26M & 42.0\% & 42.1\% & 1\%\\
+\bottomrule\end{tabular}
+\caption{Next word right with hints off and on, by kind of text.}\label{tab:domains}
+\end{table}
+
+Three things follow. A table from a different source gives nothing: transformers code did not help torch code. Holding out whole model folders did not lower the transformers gain, likely because model files in that library copy each other's code; transformers is the extreme case, and five other libraries gain 1.7 to 3.5 points. The notes gain 11 points at only 20\% because the model starts low there, at 32.1\%, on private text it has never read. With exact duplicate files left in, 27.6\% of the notes by size, that row read 33.7\% to 56.9\%, so we removed them; near copies remain.
+
+The share of 6-token matches can be measured from a sample of text with no model at all. In these runs, 24\% or less on code and Wikipedia gave under 2 points. Small tables raised the loss slightly even with trust trained on the same kind of text (sympy 1.708 to 1.725 at 10\% of the table and 1.755 at 1\%; Wikipedia 3.126 to 3.133 and 3.144), and so did the table from another library (2.093 to 2.136). Such a table should be left off.
+
+On Wikipedia the gain sits where several hint lengths agree. Where all four fire, 10\% of places, the top word rises from 48.5\% to 57.2\%; where three fire, 41.9\% to 43.5\%; with one or two the change is 0.5 points or less. It also sits where the model is unsure: 13.5\% to 15.8\% when its top word holds 10\% to 25\% of its probability, and 91.5\% to 91.6\% when that word holds over 90\%.
+
+\subsection{More context removes most of the gain on ordinary code}
+A real assistant reads more than 128 tokens, so we repeated two code rows with the model reading 512 tokens and scored the last 120 places of each block (5,000 to 8,000 places). In sympy the model alone rose from 64.4\% to 79.1\%, and hints added only 0.8 points to reach 79.9\%, with loss unchanged (0.904 and 0.907). In transformers unseen folders the model rose from 66.2\% to 77.1\%, and hints still added 8.6 points to reach 85.7\% (loss 0.993 to 0.646). So on ordinary code, reading more text gives far more than a table does; only heavily copied code keeps a clear gain.
+
+\subsection{Whole phrases and cost}
+Single next words overstate a user's gain. Asking for 5 tokens in a row, 96 prompts each, the transformers split rose from 25 to 40 right, and sympy stayed level at 26 and 25.
+
+A lookup took 0.66 ms per token in Python on the laptop, against 5.6 ms per token for the model reading 128 tokens at once. A table of 6M tokens took 234 MB of arrays and about 5 s to build, so a repeated text source can be added or rebuilt without touching the model.
+
+\subsection{A finished model gains little on general text because it already knows it}
+This fits the web text training runs. The width-40 model gained 0.63 loss at 90 steps, 0.52 at 360 and 0.34 at 1,440, and contexts it had never seen gained 0.42 per token against $-$0.03 for contexts seen 64 or more times (Table~\ref{tab:modelseen}). The finished model gains 0.06 on Wikipedia. The comparison is rough: the text, table size and hint place all differ. Hints look most useful in training, for a model that has not yet learned the text, and at inference only for repeated text that the model has not learned.
+
 \section{Limits}
 \begin{itemize}
 \item The web text models stop at a loss far above real models, so they do not show what hints do for a trained model. The largest joint model has 4.3M parameters.
 \item Each setting was run once, and learning rates were picked on the same validation chunks used for reporting.
+\item On the finished model, near copies between files remain in the table and test, the fact test has only 11 facts, and the model is 4-bit.
 \item Shakespeare is not web text: it has no crawled duplicates and its tokens are characters, so our result there does not contradict the blog post's rising returns.
 \item In a real run, leave-one-out needs the full corpus before training starts, or a table large enough to subtract one count per lookup.
 \item We measured loss at equal steps, not clock time, except where stated.
 \end{itemize}
 \section{Open Questions}
 \begin{enumerate}
+\item If a finished large model reads code with a table of that code, does a user accept more completions than with search over the same code?
+\item If hints match similar word groups instead of exact ones, do reworded questions recall new facts on a finished model?
 \item If a GPT-2-sized model is trained with Muon on web text, does adding n-gram hints from the training data lower validation loss compared with the same model without hints?
 \item If a model is trained on web text with a hint corpus about 500 times larger than the tokens it trains on, does leaving out the token's page and dropping half of the hints beat hints from earlier steps?
 \item If a model is trained on web text with hints, does each doubling of the hint corpus lower validation loss by more than the doubling before it, after near-duplicate documents are removed?
@@ -408,6 +476,8 @@ Width & Web, no hints & Web, plain hints & Web, switch & Web, switch off & Compa
 
 \section{Conclusion}
 For hints from a full corpus, remove each token's own occurrence (on web text, its whole page) and drop half of the hints during training. In a small Muon model this beat hints from earlier steps by about 0.08 at three sizes, and by more when the corpus was far larger than the tokens trained. If a run makes more than one pass, causal hints need the same removal. If hints must not replace the model's own learning, the simplest candidate is a small table in training and the full table at test time, which kept comparison and improved facts in our small test but is untested on web text. There the limit was about 5 copies of each training sentence in the table, not table size. The tested option on web text is to train every step with and without hints and add a switch trained to predict whether each hint is right. In our joint test this restored comparison with hints on and lowered web text loss further at the longest training, though sums stayed blocked with hints on. Hints at the output only need no second pass and keep reasoning, at the cost of part of the gain. These are small models and single runs, so all of this must be tested in real training on FineWeb.
+
+On a finished model, add hints only for text that repeats word for word and that the model has not learned. Measure the share of exact 6-token matches first; under about a quarter, leave hints off. Most of the value of hints on general text appears in training, while the model has not yet learned the text.
 
 \begin{thebibliography}{99}\small
 \bibitem{brunborg} H. Brunborg. N-gram hinted language modeling: NanoGPT Speedrun in 6.7s. \url{https://brunborg.com/n-gram-hinted-lm}, 2026.
@@ -434,6 +504,7 @@ For hints from a full corpus, remove each token's own occurrence (on web text, i
 \bibitem{norlund} T. Norlund et al. On the generalization ability of retrieval-enhanced transformers. arXiv:2302.12128, 2023.
 \bibitem{code} V. Rosi\'c. ngram-hints-llm: code for this paper. \url{https://github.com/vukrosic/ngram-hints-llm}, 2026.
 \bibitem{knnadapter} $k$NN-Adapter: efficient domain adaptation for black-box language models. arXiv:2302.10879, 2023.
+\bibitem{wikicopy} NeuML. wikipedia-20260401. \url{https://huggingface.co/datasets/NeuML/wikipedia-20260401}.
 \bibitem{specdec} SpecDec++: boosting speculative decoding via adaptive candidate lengths. arXiv:2405.19715, 2024.
 \bibitem{geometric} S. Ravfogel, G. Yehudai et al. Geometric Factual Recall in Transformers. arXiv:2605.12426.
 \bibitem{pidropout} Privileged Information Dropout in Reinforcement Learning. arXiv:2005.09220.

@@ -176,6 +176,52 @@ python3 mixed.py --sites 2 --width 96
 python3 mixed.py --sites 2 --drop .5 --width 96
 ```
 
+## Hints on a finished model (`finished/`)
+
+MiniCPM5-2B, 2.5 billion parameters, 4-bit MLX, weights unchanged. Hints only raise the output score of the hinted token. Hint lengths 2, 3, 4, 6. Trust has 840 numbers: length × count bucket × share bucket × how likely the model thinks the token is. Table, trust and test text share no file or page. One run per setting. The model file, Wikipedia part and tables are not in this repo; download `openbmb/MiniCPM5-2B-MLX` to `finished/model/` and a shard of `NeuML/wikipedia-20260401` to `finished/wiki/part.arrow`, and run `fetch.py` for the 2026 pages.
+
+Commands: `python hints.py features`, `python hints.py trust`, `python hints.py reason`, `python domains.py`, `python more1.py`, `python more2.py`, `python more3.py`.
+
+Wikipedia, 27.6M table tokens, 18,840 test places (table in the paper):
+
+| Test | Off | On |
+|---|---|---|
+| Unseen text, next word right | 41.7% | 43.1% |
+| Unseen text, loss | 3.145 | 3.086 |
+| 2026 pages in the table, next word right | 41.6% | 83.0% |
+| 2026 pages in the table, loss | 3.192 | 0.920 |
+| 11 new facts, page's words | 1 | 6 |
+| Same facts reworded | 1 | 1 |
+| 100 comparison questions | 54 | 54 (0 changed) |
+| 100 two-digit sums | 1 | 1 (25 changed) |
+
+By kind of text, model reading 128 tokens, about 8,000 test places, new table and trust each row:
+
+| Text | Table tokens | Loss off | Loss on | Top off | Top on | 6-token hint |
+|---|---|---|---|---|---|---|
+| transformers, unseen model folders | 6.3M | 1.608 | 0.839 | 66.2% | 83.9% | 81% |
+| transformers | 5.3M | 1.697 | 1.067 | 65.7% | 79.2% | 69% |
+| pandas | 3.8M | 1.596 | 1.525 | 67.0% | 68.9% | 38% |
+| sympy | 6.0M | 1.708 | 1.586 | 64.4% | 67.9% | 35% |
+| sklearn | 2.4M | 1.661 | 1.550 | 64.8% | 68.0% | 34% |
+| networkx | 1.3M | 1.596 | 1.478 | 65.2% | 68.7% | 33% |
+| scipy | 4.3M | 1.856 | 1.811 | 61.3% | 63.0% | 24% |
+| Own Markdown notes, exact copies removed | 5.6M | 4.269 | 3.648 | 32.1% | 43.1% | 20% |
+| sympy, 10% of table | 0.45M | 1.708 | 1.725 | 64.4% | 65.1% | 13% |
+| Wikipedia, 10% of table | 2.6M | 3.126 | 3.133 | 42.0% | 42.6% | 4% |
+| Table from transformers, test on torch | 7.3M | 2.093 | 2.136 | 58.6% | 58.4% | 4% |
+| sympy, 1% of table | 0.04M | 1.708 | 1.755 | 64.4% | 64.4% | 3% |
+| Wikipedia, 1% of table | 0.26M | 3.126 | 3.144 | 42.0% | 42.1% | 1% |
+
+Model reading 512 tokens, scored on the last 120 places of each block:
+
+| Text | Loss off | Loss on | Top off | Top on |
+|---|---|---|---|---|
+| sympy | 0.904 | 0.907 | 79.1% | 79.9% |
+| transformers, unseen model folders | 0.993 | 0.646 | 77.1% | 85.7% |
+
+5 tokens in a row, 96 prompts, 64 tokens of context: transformers unseen folders 25 to 40, sympy 26 to 25. Lookup 0.66 ms per token in Python, model 5.6 ms per token at 128 tokens at once, table of 6M tokens 234 MB.
+
 ## How rare a fact must be (`rare.py`)
 
 Accuracy without hints by how many times each of 200 facts per group was stated. Chance is 1%. With hints every group scores 100%. A model trained with hints scores at most 2.5% with hints off at every count up to 256. Runs took 42 to 311 s.

@@ -53,6 +53,24 @@ Multiply each hint by a switch between 0 and 1, read from the hidden state of a 
 
 ---
 
+## Add hints to a finished model only for text that repeats word for word
+
+We left a finished model, MiniCPM5-2B with 2.5 billion parameters, unchanged and only raised the output score of each hinted token. On unseen Wikipedia text the next word went from 41.7% to 43.1% right, so a finished model gains little on general text. New facts came back only in their stored words: 1 to 6 of 11 right, and 1 to 1 reworded. Comparison answers did not change.
+
+| Text, table and test from different files | Hints off | Hints on | Places with a 6-token hint |
+|---|---|---|---|
+| transformers code, unseen model folders | 66.2% | **83.9%** | 81% |
+| Five other Python libraries | 61% to 67% | 63% to 69% | 24% to 38% |
+| Own notes | 32.1% | **43.1%** | 20% |
+| Wikipedia | 41.7% | 43.1% | 10% |
+| Table from another library | 58.6% | 58.4% | 4% |
+
+> **Count how often exact 6-token phrases repeat before you add hints. That needs no model. Under about a quarter, leave them off.**
+
+The table used 128 tokens of context. At 512 tokens the gain fell from 3.5 to 0.8 points on sympy and from 17.7 to 8.6 on the transformers folders, so only heavily copied code keeps a clear gain.
+
+Details are in [RESULTS.md](RESULTS.md) and `finished/`. The model and text are not in this repo.
+
 ## Where it stops working
 
 > [!WARNING]

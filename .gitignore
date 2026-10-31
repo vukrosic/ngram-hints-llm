@@ -3,3 +3,7 @@ data/
 *.npy
 __pycache__/
 .DS_Store
+finished/model/
+finished/wiki/
+finished/pages.jsonl
+finished/*.npz
