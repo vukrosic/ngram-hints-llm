@@ -9,7 +9,7 @@
 \maketitle
 
 \begin{abstract}
-An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s, but training uses only hints from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. In small Muon-trained models we show that this failure comes from a token's own occurrence in the counts: keeping it gives a validation loss of 3.53, while removing it and dropping half of the hints gives 1.80, against 1.89 for hints from earlier steps. On web text the token's whole page must be removed. Hints give perfect recall of stored facts, but a model that always gets hints memorizes almost nothing itself, and hints at all three places stop it from learning comparison. In a small test, hints at full strength barely hurt a model that has already learned comparison, but further training with them removes the skill. Training with 10\% to 50\% of the table and testing with all of it kept comparison near 1.0 and raised facts from .81 to .88, with no switch and no second pass. When one model trained on web text and reasoning together, a switch trained to predict whether each hint is right raised comparison from chance to at least .905 at three model sizes and lowered web text loss below plain hints by 0.04 to 0.09 at the longest training we ran. All models are small and each setting ran once. The code is public \cite{code}.
+An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s, but training uses only hints from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. In small Muon-trained models we show that this failure comes from a token's own occurrence in the counts: keeping it gives a validation loss of 3.53, while removing it and dropping half of the hints gives 1.80, against 1.89 for hints from earlier steps. On web text the token's whole page must be removed. Hints give perfect recall of stored facts, but a model that always gets hints memorizes almost nothing itself, and hints at all three places stop it from learning comparison. In a small test, hints at full strength barely hurt a model that has already learned comparison, but further training with them removes the skill. Training with 5\% to 60\% of the table and testing with all of it kept comparison at .97 or above and raised facts from .81 to about .88, with no switch and no second pass. When one model trained on web text and reasoning together, a switch trained to predict whether each hint is right raised comparison from chance to at least .905 at three model sizes and lowered web text loss below plain hints by 0.04 to 0.09 at the longest training we ran. All models are small and each setting ran once. The code is public \cite{code}.
 \end{abstract}
 
 \section{Introduction}
@@ -295,21 +295,29 @@ Hints on from the start & .505 & .691 & .522 & .499\\\bottomrule
 \end{table}
 
 \subsection{A small table in training keeps reasoning and improves facts}
-Brunborg trains with a small corpus and validates with a large one, because a large corpus from the start makes the model rely on hints too much \cite{brunborg}. We tested that choice on reasoning (Table~\ref{tab:small}). The training table reads a share of the lines the model does not train on, the test table reads all of them, and test counts are scaled to the same count levels so that trust learned in training applies. Hints stay on, with no switch and no second pass. At 10\% and 50\% comparison is near 1.0 at both widths and facts reach .88, above the shared table's .81. At the largest table comparison is back at chance. Between these the result is erratic, so the safe range is not established, and we cannot explain the break: training lines score near 1.0 in the good and the bad runs.
+Brunborg trains with a small corpus and validates with a large one, because a large corpus from the start makes the model rely on hints too much \cite{brunborg}. We tested that choice on reasoning (Table~\ref{tab:small}). The training table reads a share of the lines the model does not train on, the test table reads all of them, and test counts are scaled to the same count levels so that trust learned in training applies. Hints stay on, with no switch and no second pass. The model trains on 16,000 comparison lines and the full table holds 84,000 others, so 5\% to 60\% is 0.25 to 3 times the lines trained on. In this range comparison is .97 or above at all three widths and facts reach about .88, above the shared table's .81. At 2\% comparison falls at width 32. From 70\% to 95\% the result is erratic, and at the largest table comparison is back at chance at every width. We cannot explain the break. Training lines score near 1.0 in the good and the bad runs, and from 20\% up the hint at the answer word is right equally often on training lines at every size (.50 for the longest hint, .55 for any length), so the hint at the answer does not explain it.
 
 A separate table also works. With the table reading one half of the name triples and training using the other half, comparison is 1.000 at widths 32, 64, 128 and at 4 layers, and at 4000 steps at width 32, with facts at .80 to .82. With hints off comparison stays low (0 to .23) in these runs, so the model needs its hints.
 
 \begin{table}[h]\centering\small
-\begin{tabular}{rrrr}\toprule
-Share of the table in training & Comparison, width 32 & Comparison, width 128 & Facts, width 32/128\\\midrule
-2\% & .781 & .957 & .807/.866\\
-10\% & \textbf{1.000} & \textbf{1.000} & .884/.885\\
-50\% & \textbf{.999} & \textbf{1.000} & .882/.881\\
-75\% & .549 & 1.000 & .885/.886\\
-90\% & .986 & .823 & .886/.882\\
-100\% & .523 & .503 & .887/.886\\\bottomrule
+\begin{tabular}{rrrrrr}\toprule
+Share of table & Times the lines trained on & Width 32 & Width 64 & Width 128 & Facts\\\midrule
+2\% & 0.1 & .781 & -- & .957 & .81--.87\\
+5\% & 0.25 & \textbf{.996} & \textbf{.996} & \textbf{.994} & .88--.89\\
+10\% & 0.5 & \textbf{1.000} & -- & \textbf{1.000} & .88--.89\\
+20\% & 1 & \textbf{1.000} & \textbf{1.000} & \textbf{1.000} & .87--.88\\
+30\% & 1.6 & \textbf{1.000} & \textbf{1.000} & \textbf{1.000} & .87\\
+40\% & 2.1 & \textbf{.997} & \textbf{.990} & \textbf{.990} & .87\\
+50\% & 2.6 & \textbf{.999} & -- & \textbf{1.000} & .88\\
+60\% & 3.2 & \textbf{.972} & \textbf{.984} & \textbf{1.000} & .89\\
+70\% & 3.7 & .897 & .945 & .785 & .89\\
+75\% & 3.9 & .549 & -- & 1.000 & .89\\
+80\% & 4.2 & 1.000 & .877 & 1.000 & .88--.89\\
+90\% & 4.7 & .986 & .976 & .823 & .88--.89\\
+95\% & 5.0 & .982 & .504 & .541 & .89\\
+100\% & 5.3 & .523 & .597 & .503 & .89\\\bottomrule
 \end{tabular}
-\caption{Hints always on, 1000 steps, one run each, all testing with the full table. We did not run this on web text or on sums.}\label{tab:small}
+\caption{Comparison with hints always on, 1000 steps, one run each, all testing with the full table. Bold marks the range where every width is at .97 or above. We did not run this on web text or on sums.}\label{tab:small}
 \end{table}
 
 \subsection{A switch learns to shut hints only when taught}
@@ -350,7 +358,7 @@ Width & Web, no hints & Web, plain hints & Web, switch & Web, switch off & Compa
 \item If a hint table drops n-grams that the model itself has already seen often, how much of the web text gain is kept?
 \item If a GPT-2-sized model is trained on web text with a switch taught to predict whether each hint is right, is its validation loss lower than with plain hints, and does the lead keep growing with training length?
 \item If the switch is trained with no pass without hints, does it still lower web text loss at long training?
-\item If a model is trained on web text and reasoning tasks with 10\% of the hint table and tested with all of it, does it keep comparison and sums, and how much of the web text gain does it keep?
+\item If a model is trained on web text and reasoning tasks with 10\% to 50\% of the hint table and tested with all of it, does it keep comparison and sums, and how much of the web text gain does it keep?
 \end{enumerate}
 
 \section{Conclusion}

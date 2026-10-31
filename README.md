@@ -21,7 +21,7 @@ Code for the paper in [`paper/main.pdf`](paper/main.pdf).
 - **A model that always gets right hints memorizes almost nothing itself**, even a fact stated 256 times.
 - **Training every step with and without hints fixes most of this.** In a joint test it kept 96% of the web gain and restored reasoning with hints off, for 47% more clock time. Reasoning with hints on stayed blocked, and common facts did not come back.
 - **Training with hints removes the skill; hints alone barely hurt it.** A model that had already learned comparison lost 0 to 19 points when hints came on at full strength, then fell to 50% to 87% after more training with them.
-- **Train with a small table and test with the full one.** With 10% or 50% of the table in training, comparison stayed at about 100% and facts rose from 81% to 88%, with no switch and no second pass. With the largest table comparison was back at chance. We do not know why it breaks.
+- **Train with a small table and test with the full one.** With 5% to 60% of the table in training (0.25 to 3 times the lines trained on), comparison stayed at 97% or above at three widths and facts rose from 81% to about 88%, with no switch and no second pass. From 70% to 95% results jumped around, and with the largest table comparison was back at chance. We do not know why it breaks.
 - **Teach a switch to predict whether each hint is right.** Learned from the loss alone it stayed fully on. Taught, at widths 32, 64 and 96 it raised comparison from chance to 90.5%, 100% and 100%, and beat plain hints on web loss by 0.04, 0.07 and 0.09 at 5760 steps. It was behind at 360 steps and level at 1440. Sums with hints on stayed blocked.
 - **Hints help text the model itself has not seen.** On web text the gain per token fell to zero once the model had seen the context 64 times.
 - **On web text most of the gain comes from short matches of 2 and 3 tokens**, and that gain shrinks as training gets longer.
@@ -42,7 +42,7 @@ Hints added at the input let the model skip the task. Adding hints only at the o
 
 ## Train with a small hint table if the model must reason
 
-The hint table can solve training lines, so the model may never need to learn the skill. Train with 10% to 50% of the table, then give it the full table at test time. Facts stay in the table, so the model still learns to trust hints. Scale test counts to the same count levels, so that the trust learned in training applies. The record already trains with a small corpus; this test adds that the choice can protect reasoning.
+The hint table can solve training lines, so the model may never need to learn the skill. Train with 5% to 60% of the table, then give it the full table at test time. Facts stay in the table, so the model still learns to trust hints. Scale test counts to the same count levels, so that the trust learned in training applies. The record already trains with a small corpus; this test adds that the choice can protect reasoning.
 
 ---
 
@@ -55,7 +55,7 @@ Multiply each hint by a switch between 0 and 1, read from the hidden state of a 
 ## Where it stops working
 
 > [!WARNING]
-> The reasoning tasks are a made-up language run on small models, so they show a mechanism and not its size in real models. The small table ran only on the made-up language, and results between 50% and 100% of the table were erratic. The switch ran once at three widths spanning 3.2 times the parameters, and it needs a pass without hints at every step. Engram reports reasoning gains with learned tables, which are a different method.
+> The reasoning tasks are a made-up language run on small models, so they show a mechanism and not its size in real models. The small table ran only on the made-up language, and results between 70% and 95% of the table were erratic. The switch ran once at three widths spanning 3.2 times the parameters, and it needs a pass without hints at every step. Engram reports reasoning gains with learned tables, which are a different method.
 
 ## Is this new?
 

@@ -17,16 +17,26 @@ Facts after trust training are .80 with hints on and about .06 with hints off. W
 
 Small table in training, full table at testing, `python gate.py --arm always --small 0.1 --width 32`. The training table reads the given share of lines the model does not train on. Test counts are scaled by that share.
 
-| Share | Comparison, width 32 | Comparison, width 128 | Facts, width 32/128 |
-|---|---|---|---|
-| 2% | .781 | .957 | .807/.866 |
-| 10% | 1.000 | 1.000 | .884/.885 |
-| 50% | .999 | 1.000 | .882/.881 |
-| 75% | .549 | 1.000 | .885/.886 |
-| 90% | .986 | .823 | .886/.882 |
-| 100% | .523 | .503 | .887/.886 |
+| Share | Times the lines trained on | Width 32 | Width 64 | Width 128 |
+|---|---|---|---|---|
+| 2% | 0.1 | .781 | - | .957 |
+| 5% | 0.25 | .996 | .996 | .994 |
+| 10% | 0.5 | 1.000 | - | 1.000 |
+| 20% | 1 | 1.000 | 1.000 | 1.000 |
+| 30% | 1.6 | 1.000 | 1.000 | 1.000 |
+| 40% | 2.1 | .997 | .990 | .990 |
+| 50% | 2.6 | .999 | - | 1.000 |
+| 60% | 3.2 | .972 | .984 | 1.000 |
+| 70% | 3.7 | .897 | .945 | .785 |
+| 75% | 3.9 | .549 | - | 1.000 |
+| 80% | 4.2 | 1.000 | .877 | 1.000 |
+| 90% | 4.7 | .986 | .976 | .823 |
+| 95% | 5.0 | .982 | .504 | .541 |
+| 100% | 5.3 | .523 | .597 | .503 |
 
-At 100%, comparison is also .597 at width 64 and .502 at 4 layers. Training lines score near 1.0 in good and bad runs, so the break is not explained.
+Facts are .87 to .89 from 5% up. From 20% up the answer hint on training lines is right at the same rate at every size, .50 for the longest hint and .55 for any length.
+
+At 100%, comparison is .502 at 4 layers. Training lines score near 1.0 in good and bad runs, so the break is not explained.
 
 Separate table, `python gate.py --arm always --split 1 --width 32`: the table reads one half of the name triples and training uses the other half. Comparison is 1.000 at width 32, 64, 128 and 4 layers, and at 4000 steps at width 32. Facts .80 to .82. Comparison with hints off is .029, .067, 0 and .231. Each triple on one line (`--unique 1`): .996, .993, .997, .994, facts .80.
 

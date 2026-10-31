@@ -320,7 +320,10 @@ for step in range(a.steps):
     if not math.isfinite(loss.item()):
         print("not finite"); break
 if a.every:
-    print("  training comparison lines with no longest hint at the answer:", round((TT[3, 1::2, CPOS] < 0).float().mean().item(), 4), flush=True)
+    def right(t, y):
+        h = t[:, :, CPOS]; r = (h == y[:, CPOS]).float()
+        return [round(v, 3) for v in r.mean(1).tolist()], round(r.max(0).values.mean().item(), 3)
+    print("  answer hint right by length, any length: train", right(TT[:, 1::2], S[1::2, 1:]), "test", right(CT, CL[:, 1:]), flush=True)
     n = 1000; R = S[1::2][:n]; rt = TT[:, 1::2][:, :n]; rk = TK[:, 1::2][:, :n]; print("  training lines", report(R, CPOS, rt, rk), flush=True)
 s_ = round(time.time() - t0, 1)
 res = dict(vars(a), fact=report(FL, FPOS, FT, FK), comp=report(CL, CPOS, CT, CK), seconds=s_, last_loss=round(loss.item(), 3))
