@@ -9,6 +9,8 @@ right (switch trained to predict whether the hint is right), inline (same target
 its own place, so it needs no second pass). Switches set by hand on comparison lines:
 noanswer (off at the answer word only), answeronly (on at the answer word only), noline (off on the whole line),
 nogt, noname, nodot (off at those words only), nofirstdot (off at the dot between the two statements only).
+Hints with the always arm: --late N --freeze M (no hints for N steps, then only trust trains for M steps), --small F (training table reads F of the
+lines not trained on, testing reads all), --split 1 (table reads one half of the name triples, training uses the other half), --unique 1 (each triple on one line).
 """
 import argparse, json, math, os, time
 import numpy as np, torch, torch.nn as nn, torch.nn.functional as F
@@ -32,6 +34,12 @@ p.add_argument("--cooldown", type=float, default=0.3)
 p.add_argument("--sites", default="", help="where hints enter: 0 input, 1 middle, 2 output")
 p.add_argument("--min-share", type=int, default=0, help="keep hints whose top next token has at least this share bucket, 5 = always the same next token")
 p.add_argument("--hard", type=int, default=0, help="1 = the switch is fully on or fully off")
+p.add_argument("--late", type=int, default=0, help="train this many steps with no hints first")
+p.add_argument("--freeze", type=int, default=0, help="then train only the hint trust for this many steps")
+p.add_argument("--unique", type=int, default=0, help="1 = each training name triple appears on one line, so hints cannot give away its answer")
+p.add_argument("--split", type=int, default=0, help="1 = the hint table reads one half of the comparison triples, training uses the other half, lines still repeat")
+p.add_argument("--small", type=float, default=0, help="training hints read this share of the corpus, testing reads all of it")
+p.add_argument("--every", type=int, default=0, help="print comparison this often")
 p.add_argument("--two", type=int, default=0, help="1 = every step also trains without hints")
 p.add_argument("--tag", default="")
 a = p.parse_args()
@@ -60,11 +68,15 @@ F_L = lines(F_[:, 0], F_[:, 1], F_[:, 2], np.full(a.facts, IS), F_[:, 3], np.ful
 trip = np.stack(np.meshgrid(*[np.arange(1, N + 1)] * 3, indexing="ij"), -1).reshape(-1, 3)
 trip = trip[(trip[:, 0] != trip[:, 1]) & (trip[:, 0] != trip[:, 2]) & (trip[:, 1] != trip[:, 2])]; rng.shuffle(trip)
 TEST_T, TRAIN_T = trip[:1000], trip[1000:]
-C_L = chains(TRAIN_T[rng.integers(0, len(TRAIN_T), NCHAIN)]); C_TEST = chains(TEST_T)
-corpus = np.concatenate([np.repeat(F_L, COPIES, 0), C_L])
+C_L = chains(TRAIN_T if a.unique else TRAIN_T[rng.integers(0, len(TRAIN_T), NCHAIN)]); C_TEST = chains(TEST_T)
+C_T = C_L
+if a.split:
+    A_T = TRAIN_T[:len(TRAIN_T) // 2]; C_T = chains(A_T[rng.integers(0, len(A_T), NCHAIN)])
+    B_T = TRAIN_T[len(TRAIN_T) // 2:]; C_L = chains(B_T[rng.integers(0, len(B_T), NCHAIN)])
+corpus = np.concatenate([np.repeat(F_L, COPIES, 0), C_T])
 half = a.batch // 2; need = a.steps * half
 stream = np.empty((a.steps * a.batch, T + 1), dtype=np.int64)
-stream[::2] = F_L[rng.integers(0, a.facts, need)]; stream[1::2] = C_L[:need]
+stream[::2] = F_L[rng.integers(0, a.facts, need)]; stream[1::2] = C_L[np.arange(need) % len(C_L)]
 
 
 def mix(k):
@@ -103,7 +115,7 @@ def lookup(t, M, m, own):
         h = np.where(use2, t2[i], h); b = np.where(use2, n2[i], b); hit &= c > 0
     else:
         c = tot[i]; h = t1[i]; b = n1[i]
-    tok = np.where(hit, h, -1); kd = np.zeros_like(tok); kd[hit] = kind(c[hit], np.maximum(b[hit], 1))
+    tok = np.where(hit, h, -1); kd = np.zeros_like(tok); kd[hit] = kind(np.ceil(c[hit] * CS), np.maximum(np.ceil(b[hit] * CS), 1))
     return tok, kd
 
 
@@ -112,8 +124,14 @@ def hints(M, own):
     return torch.as_tensor(np.stack([x[0] for x in r])), torch.as_tensor(np.stack([x[1] for x in r]))
 
 
-TABLES = [table(m) for m in LV]
-TT, TK = hints(stream, True); FT, FK = hints(F_L, False); CT, CK = hints(C_TEST, False)
+CS = 1.0; TABLES = [table(m) for m in LV]
+if a.small:
+    full = TABLES; rows = np.repeat(F_L, COPIES, 0); spare = C_L[need:]
+    corpus = np.concatenate([rows[rng.random(len(rows)) < a.small], spare[rng.random(len(spare)) < a.small]]); TABLES = [table(m) for m in LV]
+    TT, TK = hints(stream, False); TABLES = full; CS = a.small
+else:
+    TT, TK = hints(stream, True)
+FT, FK = hints(F_L, False); CT, CK = hints(C_TEST, False)
 if a.min_share:
     TT, FT, CT = (t.where(k % 6 >= a.min_share, torch.tensor(-1)) for t, k in ((TT, TK), (FT, FK), (CT, CK)))
 S, FL, CL, CT_ABC = torch.as_tensor(stream), torch.as_tensor(F_L), torch.as_tensor(C_TEST), torch.as_tensor(TEST_T)
@@ -279,8 +297,11 @@ def report(M, pos, tok, kd):
 
 t0 = time.time()
 for step in range(a.steps):
+    if a.every and (step % a.every == 0 or step in (a.late, a.late + a.freeze)):
+        c_, f_ = report(CL, CPOS, CT, CK), report(FL, FPOS, FT, FK)
+        print(f"  step {step} comparison off {c_['off']} on {c_.get('on')} first {c_.get('picks_first_name')}  facts off {f_['off']} on {f_.get('on')}  trust {[round(v, 2) for v in model.alpha.tolist()]}", flush=True)
     i = torch.arange(step * a.batch, (step + 1) * a.batch); b = S[i]; x, y = b[:, :-1], b[:, 1:]
-    if HINTS:
+    if HINTS and step >= a.late:
         o, o0, logit = model(x, TT[:, i], TK[:, i]); loss = ce(o, y)
         if o0 is not None:
             loss = (loss + ce(o0, y)) / 2
@@ -291,13 +312,16 @@ for step in range(a.steps):
     else:
         loss = ce(model(x)[1], y)
     loss.backward()
-    for o_ in opts:
+    for o_ in opts[1:2] if a.late <= step < a.late + a.freeze else opts:
         for g in o_.param_groups:
             g["lr"] = g["base_lr"] * lr_scale(step)
         o_.step()
     model.zero_grad(set_to_none=True)
     if not math.isfinite(loss.item()):
         print("not finite"); break
+if a.every:
+    print("  training comparison lines with no longest hint at the answer:", round((TT[3, 1::2, CPOS] < 0).float().mean().item(), 4), flush=True)
+    n = 1000; R = S[1::2][:n]; rt = TT[:, 1::2][:, :n]; rk = TK[:, 1::2][:, :n]; print("  training lines", report(R, CPOS, rt, rk), flush=True)
 s_ = round(time.time() - t0, 1)
 res = dict(vars(a), fact=report(FL, FPOS, FT, FK), comp=report(CL, CPOS, CT, CK), seconds=s_, last_loss=round(loss.item(), 3))
 print(f"{a.arm:8} facts {res['fact']}  comparison {res['comp']}  {s_}s", flush=True)

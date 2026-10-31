@@ -2,7 +2,35 @@
 
 Each setting was run once. Loss is cross-entropy on the next token; lower is better.
 
-## Why hints block reasoning, and a switch that fixes it (`gate.py`, `mixed.py`)
+## How hints block reasoning (`gate.py`)
+
+Hints on from step 600, `python gate.py --arm always --steps 1600 --late 600 --freeze 200 --every 400 --width 32`. Comparison on held-out names, hints on unless stated, one run each:
+
+| Stage | Width 32 | Width 64 | Width 128 | 4 layers |
+|---|---|---|---|---|
+| 600 steps with no hints, hints off | .946 | .974 | .996 | .931 |
+| Then 200 steps training only trust | .958 | .853 | .809 | .950 |
+| Then 800 steps with hints on | .504 | .852 | .872 | .580 |
+| Hints on from the start | .505 | .691 | .522 | .499 |
+
+Facts after trust training are .80 with hints on and about .06 with hints off. With the shared table, after 600 steps the model scores .999 on training lines and .52 on held-out names.
+
+Small table in training, full table at testing, `python gate.py --arm always --small 0.1 --width 32`. The training table reads the given share of lines the model does not train on. Test counts are scaled by that share.
+
+| Share | Comparison, width 32 | Comparison, width 128 | Facts, width 32/128 |
+|---|---|---|---|
+| 2% | .781 | .957 | .807/.866 |
+| 10% | 1.000 | 1.000 | .884/.885 |
+| 50% | .999 | 1.000 | .882/.881 |
+| 75% | .549 | 1.000 | .885/.886 |
+| 90% | .986 | .823 | .886/.882 |
+| 100% | .523 | .503 | .887/.886 |
+
+At 100%, comparison is also .597 at width 64 and .502 at 4 layers. Training lines score near 1.0 in good and bad runs, so the break is not explained.
+
+Separate table, `python gate.py --arm always --split 1 --width 32`: the table reads one half of the name triples and training uses the other half. Comparison is 1.000 at width 32, 64, 128 and 4 layers, and at 4000 steps at width 32. Facts .80 to .82. Comparison with hints off is .029, .067, 0 and .231. Each triple on one line (`--unique 1`): .996, .993, .997, .994, facts .80.
+
+## Hints set by hand, and a switch (`gate.py`, `mixed.py`)
 
 Small test: width 32, 2 layers, 1000 steps, half facts and half comparison lines, "a > b . b > c . top ? a .", about 5 seconds, one run each. Hints set by hand at chosen words of comparison lines, in training and testing. Every row trains each step with and without hints. Accuracy is comparison with hints on.
 
