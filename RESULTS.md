@@ -40,6 +40,23 @@ At 100%, comparison is .502 at 4 layers. Training lines score near 1.0 in good a
 
 Separate table, `python gate.py --arm always --split 1 --width 32`: the table reads one half of the name triples and training uses the other half. Comparison is 1.000 at width 32, 64, 128 and 4 layers, and at 4000 steps at width 32. Facts .80 to .82. Comparison with hints off is .029, .067, 0 and .231. Each triple on one line (`--unique 1`): .996, .993, .997, .994, facts .80.
 
+### The limit follows copies in the table
+
+`python gate.py --arm always --small 1.0 --names 30 --width 32`. Name group means one ordered triple. The name rows hold the same table size.
+
+| Setting | Copies of each name group | Width 32 | Width 128 |
+|---|---|---|---|
+| 14 names, full table | 35 | .552 | .560 |
+| 20 names, 500 steps | 7.9 | .552 | .884 |
+| 20 names, full table | 7.2 | .523 | .503 |
+| 20 names, 90% of table | 6.5 | .986 | .823 |
+| 20 names, 2000 steps | 5.8 | .920 | .720 |
+| 20 names, 60% of table | 4.3 | .972 | 1.000 |
+| 30 names, full table | 1.8 | .999 | 1.000 |
+| 40 names, full table | 0.7 | 1.000 | 1.000 |
+
+Explanations that failed: without length 6 hints the full table still blocks (`--levels 0,1,2`: .504, .508, .448 at widths 32, 64, 128), length 4 alone blocks (.492, .501), and one trust level for every hint (`--nokind 1`) gives .590, .529 at 100% and .982, .978 at 20%, facts .89. A 20% table in training and testing (`--testsmall 1`) keeps comparison at 1.000 with facts .662 and .750. Removing the hint at the word "top" from a blocked model (`--probe 1`) raises held-out comparison from .52 to .80 at width 32 and .50 to .61 at width 128.
+
 ## Hints set by hand, and a switch (`gate.py`, `mixed.py`)
 
 Small test: width 32, 2 layers, 1000 steps, half facts and half comparison lines, "a > b . b > c . top ? a .", about 5 seconds, one run each. Hints set by hand at chosen words of comparison lines, in training and testing. Every row trains each step with and without hints. Accuracy is comparison with hints on.

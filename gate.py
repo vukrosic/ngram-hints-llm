@@ -10,7 +10,7 @@ its own place, so it needs no second pass). Switches set by hand on comparison l
 noanswer (off at the answer word only), answeronly (on at the answer word only), noline (off on the whole line),
 nogt, noname, nodot (off at those words only), nofirstdot (off at the dot between the two statements only).
 Hints with the always arm: --late N --freeze M (no hints for N steps, then only trust trains for M steps), --small F (training table reads F of the
-lines not trained on, testing reads all), --split 1 (table reads one half of the name triples, training uses the other half), --unique 1 (each triple on one line).
+lines not trained on, testing reads all, --testsmall 1 keeps it at testing), --names N sets copies in the table, --levels, --nokind, --dropline, --probe test the cause, --split 1 (table reads one half of the name triples, training uses the other half), --unique 1 (each triple on one line).
 """
 import argparse, json, math, os, time
 import numpy as np, torch, torch.nn as nn, torch.nn.functional as F
@@ -39,6 +39,12 @@ p.add_argument("--freeze", type=int, default=0, help="then train only the hint t
 p.add_argument("--unique", type=int, default=0, help="1 = each training name triple appears on one line, so hints cannot give away its answer")
 p.add_argument("--split", type=int, default=0, help="1 = the hint table reads one half of the comparison triples, training uses the other half, lines still repeat")
 p.add_argument("--small", type=float, default=0, help="training hints read this share of the corpus, testing reads all of it")
+p.add_argument("--testsmall", type=int, default=0, help="1 = testing also reads the small table")
+p.add_argument("--probe", type=int, default=0, help="1 = after training, remove hints one word position at a time")
+p.add_argument("--levels", default="", help="keep only these hint lengths, 0 to 3 = lengths 2, 3, 4, 6")
+p.add_argument("--dropline", type=float, default=0, help="this share of training comparison lines loses its length 6 hints")
+p.add_argument("--measure", type=int, default=0, help="1 = print the share of training lines with no length 6 hint, then stop")
+p.add_argument("--nokind", type=int, default=0, help="1 = every hint gets the same trust, no count or share signal")
 p.add_argument("--every", type=int, default=0, help="print comparison this often")
 p.add_argument("--two", type=int, default=0, help="1 = every step also trains without hints")
 p.add_argument("--tag", default="")
@@ -128,12 +134,23 @@ CS = 1.0; TABLES = [table(m) for m in LV]
 if a.small:
     full = TABLES; rows = np.repeat(F_L, COPIES, 0); spare = C_L[need:]
     corpus = np.concatenate([rows[rng.random(len(rows)) < a.small], spare[rng.random(len(spare)) < a.small]]); TABLES = [table(m) for m in LV]
-    TT, TK = hints(stream, False); TABLES = full; CS = a.small
+    TT, TK = hints(stream, False)
+    if not a.testsmall:
+        TABLES = full; CS = a.small
 else:
     TT, TK = hints(stream, True)
 FT, FK = hints(F_L, False); CT, CK = hints(C_TEST, False)
 if a.min_share:
     TT, FT, CT = (t.where(k % 6 >= a.min_share, torch.tensor(-1)) for t, k in ((TT, TK), (FT, FK), (CT, CK)))
+if a.measure:
+    print("no length 6 hint at word 7, all comparison training lines:", round((TT[3, 1::2, 7] < 0).float().mean().item(), 4), "lines", int((TT[3, 1::2, 7] < 0).sum()), flush=True); raise SystemExit
+if a.levels:
+    for L in set(range(len(LV))) - {int(c) for c in a.levels.split(",")}:
+        TT[L] = -1; FT[L] = -1; CT[L] = -1
+if a.nokind:
+    TK[:] = 0; FK[:] = 0; CK[:] = 0
+if a.dropline:
+    TT[3, np.flatnonzero((rng.random(len(stream)) < a.dropline) & (np.arange(len(stream)) % 2 == 1))] = -1
 S, FL, CL, CT_ABC = torch.as_tensor(stream), torch.as_tensor(F_L), torch.as_tensor(C_TEST), torch.as_tensor(TEST_T)
 
 
@@ -325,6 +342,18 @@ if a.every:
         return [round(v, 3) for v in r.mean(1).tolist()], round(r.max(0).values.mean().item(), 3)
     print("  answer hint right by length, any length: train", right(TT[:, 1::2], S[1::2, 1:]), "test", right(CT, CL[:, 1:]), flush=True)
     n = 1000; R = S[1::2][:n]; rt = TT[:, 1::2][:, :n]; rk = TK[:, 1::2][:, :n]; print("  training lines", report(R, CPOS, rt, rk), flush=True)
+if a.probe:
+    @torch.no_grad()
+    def acc(M, tok, kd):
+        model.eval()
+        return round((model(M[:, :-1], tok, kd)[0][:, CPOS].argmax(-1) == M[:, 1:][:, CPOS]).float().mean().item(), 3)
+
+    for name, M, t, k in (("train", S[1::2][:1000], TT[:, 1::2][:, :1000], TK[:, 1::2][:, :1000]), ("test", CL, CT, CK)):
+        drop, only = [], []
+        for w in range(CPOS + 1):
+            d = t.clone(); d[:, :, w] = -1; drop.append(acc(M, d, k))
+            o = torch.full_like(t, -1); o[:, :, w] = t[:, :, w]; only.append(acc(M, o, k))
+        print(f"  {name} all {acc(M, t, k)} remove one position {drop} keep one position {only}", flush=True)
 s_ = round(time.time() - t0, 1)
 res = dict(vars(a), fact=report(FL, FPOS, FT, FK), comp=report(CL, CPOS, CT, CK), seconds=s_, last_loss=round(loss.item(), 3))
 print(f"{a.arm:8} facts {res['fact']}  comparison {res['comp']}  {s_}s", flush=True)

@@ -9,7 +9,7 @@
 \maketitle
 
 \begin{abstract}
-An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s, but training uses only hints from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. In small Muon-trained models we show that this failure comes from a token's own occurrence in the counts: keeping it gives a validation loss of 3.53, while removing it and dropping half of the hints gives 1.80, against 1.89 for hints from earlier steps. On web text the token's whole page must be removed. Hints give perfect recall of stored facts, but a model that always gets hints memorizes almost nothing itself, and hints at all three places stop it from learning comparison. In a small test, hints at full strength barely hurt a model that has already learned comparison, but further training with them removes the skill. Training with 5\% to 60\% of the table and testing with all of it kept comparison at .97 or above and raised facts from .81 to about .88, with no switch and no second pass. When one model trained on web text and reasoning together, a switch trained to predict whether each hint is right raised comparison from chance to at least .905 at three model sizes and lowered web text loss below plain hints by 0.04 to 0.09 at the longest training we ran. All models are small and each setting ran once. The code is public \cite{code}.
+An n-gram hint tells a language model which token most often followed the last $n$ tokens in the training data. Hints recently cut the NanoGPT Speedrun record from 39.9 s to 6.7 s, but training uses only hints from tokens trained in earlier steps, because a large corpus from the start makes the model rely on hints too much. In small Muon-trained models we show that this failure comes from a token's own occurrence in the counts: keeping it gives a validation loss of 3.53, while removing it and dropping half of the hints gives 1.80, against 1.89 for hints from earlier steps. On web text the token's whole page must be removed. Hints give perfect recall of stored facts, but a model that always gets hints memorizes almost nothing itself, and hints at all three places stop it from learning comparison. In a small test, hints at full strength barely hurt a model that has already learned comparison, but further training with them removes the skill. Training with 5\% to 60\% of the table and testing with all of it kept comparison at .97 or above and raised facts from .81 to about .88, with no switch and no second pass. The limit follows how many copies of each example the table holds, not table size. When one model trained on web text and reasoning together, a switch trained to predict whether each hint is right raised comparison from chance to at least .905 at three model sizes and lowered web text loss below plain hints by 0.04 to 0.09 at the longest training we ran. All models are small and each setting ran once. The code is public \cite{code}.
 \end{abstract}
 
 \section{Introduction}
@@ -320,6 +320,26 @@ Share of table & Times the lines trained on & Width 32 & Width 64 & Width 128 & 
 \caption{Comparison with hints always on, 1000 steps, one run each, all testing with the full table. Bold marks the range where every width is at .97 or above. We did not run this on web text or on sums.}\label{tab:small}
 \end{table}
 
+\subsection{The limit follows copies in the table, not table size}
+The break could depend on table size against the data trained on, or on how many copies of each example the table holds. We kept the same 84,000 table lines and 16,000 training lines and changed the number of names, which changes copies of each name group and nothing else (Table~\ref{tab:copies}). With 30 or 40 names the full table no longer blocks comparison, and facts rise to .97 and .99. Comparison is safe up to about 4 copies, erratic from 5 to 7, and blocked from about 7. Changing training steps fits copies better than the ratio: 2000 steps is 2.1 times the lines trained on, inside the safe ratio, but 5.8 copies, and gives the erratic .920 and .720.
+
+Several explanations failed. Length 6 hints are the only ones that hold all three names, but without them the full table still blocks comparison (.504, .508 and .448 at widths 32, 64 and 128), and length 4 hints alone block it too (.492 and .501). Giving every hint one trust level, with no count or share signal, leaves the 100\% table blocked (.590, .529) and the 20\% table working (.982, .978), with facts at .89, so the count scaling above is not needed here. A 20\% table used in training and testing keeps comparison at 1.000 with facts at .66 and .75, so the block comes from the table in training and the full table at test adds only facts. In a blocked model, removing the hint at the word ``top'' raises held-out comparison from .52 to .80 at width 32 and from .50 to .61 at width 128. We do not yet know why many copies block the skill.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrr}\toprule
+Setting & Copies of each name group & Width 32 & Width 128\\\midrule
+14 names, full table & 35 & .552 & .560\\
+20 names, 500 steps & 7.9 & .552 & .884\\
+20 names, full table & 7.2 & .523 & .503\\
+20 names, 90\% of table & 6.5 & .986 & .823\\
+20 names, 2000 steps & 5.8 & .920 & .720\\
+20 names, 60\% of table & 4.3 & \textbf{.972} & \textbf{1.000}\\
+30 names, full table & 1.8 & \textbf{.999} & \textbf{1.000}\\
+40 names, full table & 0.7 & \textbf{1.000} & \textbf{1.000}\\\bottomrule
+\end{tabular}
+\caption{Comparison with hints always on, one run each. The 14, 20, 30 and 40 name full tables hold the same number of lines. A name group here is one ordered triple.}\label{tab:copies}
+\end{table}
+
 \subsection{A switch learns to shut hints only when taught}
 We multiply each token's hint by a switch between 0 and 1, read by a linear layer from the hidden state of a pass without hints. Learned from the loss alone, the switch stays at 1.0 and comparison stays at .769. We then gave it a second target: predict whether the longest hint equals the next token. This target is known from the data and adds one small loss. In the small test the taught switch gives comparison between .50 and .996, and no place in the model does best at every size.
 
@@ -358,11 +378,13 @@ Width & Web, no hints & Web, plain hints & Web, switch & Web, switch off & Compa
 \item If a hint table drops n-grams that the model itself has already seen often, how much of the web text gain is kept?
 \item If a GPT-2-sized model is trained on web text with a switch taught to predict whether each hint is right, is its validation loss lower than with plain hints, and does the lead keep growing with training length?
 \item If the switch is trained with no pass without hints, does it still lower web text loss at long training?
+\item If a hint table is capped so that it holds at most a few copies of each passage, does a model trained on web text keep reasoning tasks and the web text gain?
+\item Why do many copies of an example in the table stop a model from learning the skill?
 \item If a model is trained on web text and reasoning tasks with 10\% to 50\% of the hint table and tested with all of it, does it keep comparison and sums, and how much of the web text gain does it keep?
 \end{enumerate}
 
 \section{Conclusion}
-For hints from a full corpus, remove each token's own occurrence (on web text, its whole page) and drop half of the hints during training. In a small Muon model this beat hints from earlier steps by about 0.08 at three sizes, and by more when the corpus was far larger than the tokens trained. If a run makes more than one pass, causal hints need the same removal. If hints must not replace the model's own learning, the simplest candidate is a small table in training and the full table at test time, which kept comparison and improved facts in our small test but is untested on web text. The tested option on web text is to train every step with and without hints and add a switch trained to predict whether each hint is right. In our joint test this restored comparison with hints on and lowered web text loss further at the longest training, though sums stayed blocked with hints on. Hints at the output only need no second pass and keep reasoning, at the cost of part of the gain. These are small models and single runs, so all of this must be tested in real training on FineWeb.
+For hints from a full corpus, remove each token's own occurrence (on web text, its whole page) and drop half of the hints during training. In a small Muon model this beat hints from earlier steps by about 0.08 at three sizes, and by more when the corpus was far larger than the tokens trained. If a run makes more than one pass, causal hints need the same removal. If hints must not replace the model's own learning, the simplest candidate is a small table in training and the full table at test time, which kept comparison and improved facts in our small test but is untested on web text. There the limit was about 4 copies of each example in the table, not table size. The tested option on web text is to train every step with and without hints and add a switch trained to predict whether each hint is right. In our joint test this restored comparison with hints on and lowered web text loss further at the longest training, though sums stayed blocked with hints on. Hints at the output only need no second pass and keep reasoning, at the cost of part of the gain. These are small models and single runs, so all of this must be tested in real training on FineWeb.
 
 \begin{thebibliography}{99}\small
 \bibitem{brunborg} H. Brunborg. N-gram hinted language modeling: NanoGPT Speedrun in 6.7s. \url{https://brunborg.com/n-gram-hinted-lm}, 2026.
